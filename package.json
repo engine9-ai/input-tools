@@ -1,6 +1,6 @@
 {
   "name": "@engine9/input-tools",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "type": "module",
   "description": "Tools for dealing with Engine9 inputs",
   "main": "index.js",
@@ -11,7 +11,7 @@
   "author": "Engine9",
   "license": "GPL-3.0-or-later",
   "devDependencies": {
-    "eslint": "^9.33.0"
+    "eslint": "^9.39.2"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",

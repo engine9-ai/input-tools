@@ -12,7 +12,7 @@ import FileUtilities from './file/FileUtilities.js';
 import { getTempFilename, getBatchTransform, getFile, streamPacket } from './file/tools.js';
 const { Transform, Writable } = nodestream;
 const { pipeline } = promises;
-const debug = debug$0('@engine9-io/input-tools');
+const debug = debug$0('@engine9/input-tools');
 const debugThrottle = throttle(1000, debug, { noLeading: false, noTrailing: false });
 class ForEachEntry {
   constructor({ accountId } = {}) {
