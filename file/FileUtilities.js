@@ -16,7 +16,7 @@ const fsp = fs.promises;
 const { Readable, Transform, PassThrough, Writable } = nodestream;
 const { pipeline } = promises;
 
-const debug = debug$0('@engine9-io/file');
+const debug = debug$0('@engine9/file');
 const { getXlsxStream } = xlstream;
 
 function Worker({ accountId }) {
