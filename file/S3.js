@@ -54,7 +54,7 @@ Worker.prototype.stream = async function ({ filename }) {
   const { Bucket, Key } = getParts(filename);
   const command = new GetObjectCommand({ Bucket, Key });
   try {
-    debug(`Streaming file ${Key}`);
+    debug(`Streaming file s3://${Bucket}/${Key}`);
     const response = await s3Client.send(command);
     return { stream: response.Body };
   } catch (e) {
