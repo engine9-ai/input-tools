@@ -300,6 +300,18 @@ function makeStrings(o) {
     return a;
   }, {});
 }
+/** Basename postfix with leading dot, e.g. `.txt`, `.csv.gz`; empty string if none. */
+function getFilePostfix(filename) {
+  const base = path.basename(filename).toLowerCase();
+  if (!base || !base.includes('.')) return '';
+  if (base.endsWith('.gz')) {
+    const withoutGz = base.slice(0, -3);
+    const i = withoutGz.lastIndexOf('.');
+    if (i >= 0) return `${withoutGz.slice(i)}.gz`;
+    return '.gz';
+  }
+  return base.slice(base.lastIndexOf('.'));
+}
 function appendPostfix(filename, postfix) {
   const filenameParts = filename.split('/');
   const fileParts = filenameParts
@@ -331,6 +343,7 @@ export { getTempDir };
 export { getBatchTransform };
 export { getDebatchTransform };
 export { getFile };
+export { getFilePostfix };
 export { getManifest };
 export { getPacketFiles };
 export { getStringArray };
@@ -348,6 +361,7 @@ export default {
   getBatchTransform,
   getDebatchTransform,
   getFile,
+  getFilePostfix,
   getManifest,
   getPacketFiles,
   getStringArray,

@@ -2,7 +2,7 @@ import debug$0 from 'debug';
 import fs from 'node:fs';
 import withDb from 'mime-type/with-db';
 import clientS3 from '@aws-sdk/client-s3';
-import { getTempFilename, relativeDate } from './tools.js';
+import { getTempFilename, getFilePostfix, relativeDate } from './tools.js';
 const debug = debug$0('@engine9/input/S3');
 const { mimeType: mime } = withDb;
 const {
@@ -247,6 +247,7 @@ Worker.prototype.analyze = async function ({ directory }) {
   let lastModified = null;
   let firstTime = null;
   let lastTime = null;
+  const postfixCounts = Object.create(null);
   let ContinuationToken = undefined;
   do {
     const result = await s3Client.send(
@@ -270,6 +271,8 @@ Worker.prototype.analyze = async function ({ directory }) {
         continue;
       }
       fileCount++;
+      const postfix = getFilePostfix(objectKey);
+      postfixCounts[postfix] = (postfixCounts[postfix] || 0) + 1;
       const mtime = new Date(content.LastModified).getTime();
       const modifiedAt = new Date(content.LastModified).toISOString();
       const filename = `${this.prefix}://${Bucket}/${objectKey}`;
@@ -287,6 +290,7 @@ Worker.prototype.analyze = async function ({ directory }) {
   return {
     fileCount,
     directoryCount: dirsSeen.size,
+    postfixCounts,
     firstModified: fileCount ? firstModified : null,
     lastModified: fileCount ? lastModified : null
   };

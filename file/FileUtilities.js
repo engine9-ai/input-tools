@@ -11,7 +11,7 @@ import languageEncoding from 'detect-file-encoding-and-language';
 import R2Worker from './R2.js';
 import S3Worker from './S3.js';
 import ParquetWorker from './Parquet.js';
-import { bool, getTempFilename, getStringArray, getTempDir, makeStrings, streamPacket, relativeDate } from './tools.js';
+import { bool, getTempFilename, getStringArray, getTempDir, getFilePostfix, makeStrings, streamPacket, relativeDate } from './tools.js';
 const fsp = fs.promises;
 const { Readable, Transform, PassThrough, Writable } = nodestream;
 const { pipeline } = promises;
@@ -669,6 +669,7 @@ Worker.prototype.analyze = async function ({ directory }) {
   let lastModified = null;
   let firstTime = null;
   let lastTime = null;
+  const postfixCounts = Object.create(null);
   const walk = async (dir) => {
     const entries = await fsp.readdir(dir, { withFileTypes: true });
     for (const ent of entries) {
@@ -678,6 +679,8 @@ Worker.prototype.analyze = async function ({ directory }) {
         await walk(fullPath);
       } else {
         fileCount += 1;
+        const postfix = getFilePostfix(fullPath);
+        postfixCounts[postfix] = (postfixCounts[postfix] || 0) + 1;
         const stats = await fsp.stat(fullPath);
         const mtime = stats.mtimeMs;
         const modifiedAt = new Date(stats.mtime).toISOString();
@@ -696,6 +699,7 @@ Worker.prototype.analyze = async function ({ directory }) {
   return {
     fileCount,
     directoryCount,
+    postfixCounts,
     firstModified: fileCount ? firstModified : null,
     lastModified: fileCount ? lastModified : null
   };
