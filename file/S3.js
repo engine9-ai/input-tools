@@ -2,7 +2,7 @@ import debug$0 from 'debug';
 import fs from 'node:fs';
 import withDb from 'mime-type/with-db';
 import clientS3 from '@aws-sdk/client-s3';
-import { getTempFilename, getFilePostfix, relativeDate } from './tools.js';
+import { getTempFilename, getFilePostfix, normalizeListDepth, relativeDate } from './tools.js';
 const debug = debug$0('@engine9/input/S3');
 const { mimeType: mime } = withDb;
 const {
@@ -187,50 +187,120 @@ Worker.prototype.write.metadata = {
     content: { description: 'Contents of file' }
   }
 };
-Worker.prototype.list = async function ({ directory, start, end, raw }) {
+Worker.prototype.list = async function ({ directory, start, end, raw, depth: depthOpt }) {
   if (!directory) throw new Error('directory is required');
   let dir = directory;
   while (dir.slice(-1) === '/') dir = dir.slice(0, -1);
-  const { Bucket, Key: Prefix } = getParts(dir);
+  const { Bucket, Key: rootPrefix } = getParts(dir);
   const s3Client = this.getClient();
-  const command = new ListObjectsV2Command({
-    Bucket,
-    Prefix: `${Prefix}/`,
-    Delimiter: '/'
-  });
-  const { Contents: files, CommonPrefixes } = await s3Client.send(command);
-  if (raw) return files;
-  // debug('Prefixes:', { CommonPrefixes });
-  const output = []
-    .concat(
-      (CommonPrefixes || []).map((f) => ({
-        name: f.Prefix.slice(Prefix.length + 1, -1),
-        type: 'directory'
-      }))
-    )
-    .concat(
-      (files || [])
-        .filter(({ LastModified }) => {
-          if (start && new Date(LastModified) < start) {
-            return false;
-          } else if (end && new Date(LastModified) > end) {
-            return false;
-          } else {
-            return true;
-          }
-        })
-        .map(({ Key, Size, LastModified }) => ({
-          name: Key.slice(Prefix.length + 1),
-          type: 'file',
-          size: Size,
-          modifiedAt: new Date(LastModified).toISOString()
+  const maxDepth = normalizeListDepth(depthOpt);
+
+  const relToRoot = (keyOrPrefix) => {
+    const normalized = keyOrPrefix.replace(/\/$/, '');
+    if (!rootPrefix) return normalized;
+    if (normalized.length <= rootPrefix.length) return '';
+    return normalized.slice(rootPrefix.length + 1);
+  };
+
+  if (!maxDepth) {
+    const Prefix = rootPrefix;
+    const command = new ListObjectsV2Command({
+      Bucket,
+      Prefix: `${Prefix}/`,
+      Delimiter: '/'
+    });
+    const { Contents: files, CommonPrefixes } = await s3Client.send(command);
+    if (raw) return files;
+    const output = []
+      .concat(
+        (CommonPrefixes || []).map((f) => ({
+          name: f.Prefix.slice(Prefix.length + 1, -1),
+          type: 'directory'
         }))
-    );
+      )
+      .concat(
+        (files || [])
+          .filter(({ LastModified }) => {
+            if (start && new Date(LastModified) < start) {
+              return false;
+            } else if (end && new Date(LastModified) > end) {
+              return false;
+            } else {
+              return true;
+            }
+          })
+          .map(({ Key, Size, LastModified }) => ({
+            name: Key.slice(Prefix.length + 1),
+            type: 'file',
+            size: Size,
+            modifiedAt: new Date(LastModified).toISOString()
+          }))
+      );
+    return output;
+  }
+
+  if (raw) {
+    throw new Error('list raw output is not supported together with depth');
+  }
+
+  const output = [];
+
+  async function listLevel(currentPrefix) {
+    const prefixParam = currentPrefix === '' ? '' : `${currentPrefix}/`;
+    let ContinuationToken = undefined;
+    const allPrefixes = [];
+    const allFiles = [];
+    do {
+      const result = await s3Client.send(
+        new ListObjectsV2Command({
+          Bucket,
+          Prefix: prefixParam,
+          Delimiter: '/',
+          ContinuationToken
+        })
+      );
+      allPrefixes.push(...(result.CommonPrefixes || []));
+      allFiles.push(...(result.Contents || []));
+      ContinuationToken = result.IsTruncated ? result.NextContinuationToken : undefined;
+    } while (ContinuationToken);
+
+    for (const cp of allPrefixes) {
+      const subPrefix = cp.Prefix.replace(/\/$/, '');
+      const rel = relToRoot(cp.Prefix);
+      if (!rel) continue;
+      const segCount = rel.split('/').length;
+      if (segCount > maxDepth) continue;
+      output.push({ name: rel, type: 'directory' });
+      if (segCount < maxDepth) {
+        await listLevel(subPrefix);
+      }
+    }
+    for (const obj of allFiles) {
+      const { Key, Size, LastModified } = obj;
+      const rel = relToRoot(Key);
+      if (!rel) continue;
+      if (rel.split('/').length > maxDepth) continue;
+      if (start && new Date(LastModified) < start) continue;
+      if (end && new Date(LastModified) > end) continue;
+      output.push({
+        name: rel,
+        type: 'file',
+        size: Size,
+        modifiedAt: new Date(LastModified).toISOString()
+      });
+    }
+  }
+
+  await listLevel(rootPrefix);
   return output;
 };
 Worker.prototype.list.metadata = {
   options: {
-    directory: { required: true }
+    directory: { required: true },
+    depth: {
+      description:
+        'If set, recursively list objects and prefixes up to this key depth (relative to directory); omit for a single-level listing only'
+    }
   }
 };
 Worker.prototype.analyzeDirectory = async function ({ directory }) {

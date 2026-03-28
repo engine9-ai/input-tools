@@ -11,7 +11,17 @@ import languageEncoding from 'detect-file-encoding-and-language';
 import R2Worker from './R2.js';
 import S3Worker from './S3.js';
 import ParquetWorker from './Parquet.js';
-import { bool, getTempFilename, getStringArray, getTempDir, getFilePostfix, makeStrings, streamPacket, relativeDate } from './tools.js';
+import {
+  bool,
+  getTempFilename,
+  getStringArray,
+  getTempDir,
+  getFilePostfix,
+  makeStrings,
+  normalizeListDepth,
+  streamPacket,
+  relativeDate
+} from './tools.js';
 const fsp = fs.promises;
 const { Readable, Transform, PassThrough, Writable } = nodestream;
 const { pipeline } = promises;
@@ -623,15 +633,42 @@ Worker.prototype.json.metadata = {
     filename: { description: 'Get a javascript object from a file' }
   }
 };
-Worker.prototype.list = async function ({ directory, start: s, end: e }) {
+Worker.prototype.list = async function ({ directory, start: s, end: e, depth: depthOpt }) {
   if (!directory) throw new Error('directory is required');
   let start = null;
   let end = null;
   if (s) start = relativeDate(s);
   if (e) end = relativeDate(e);
+  const maxDepth = normalizeListDepth(depthOpt);
   if (directory.startsWith('s3://') || directory.startsWith('r2://')) {
     const worker = new (directory.startsWith('r2://') ? R2Worker : S3Worker)(this);
-    return worker.list({ directory, start, end });
+    return worker.list({ directory, start, end, depth: maxDepth });
+  }
+  if (maxDepth) {
+    const baseDir = path.resolve(directory);
+    const withModified = [];
+    const walk = async (dir, relParts) => {
+      const entries = await fsp.readdir(dir, { withFileTypes: true });
+      for (const ent of entries) {
+        const fullPath = path.join(dir, ent.name);
+        const segCount = relParts.length + 1;
+        if (segCount > maxDepth) continue;
+        const stats = await fsp.stat(fullPath);
+        if (start && stats.mtime < start.getTime()) continue;
+        if (end && stats.mtime > end.getTime()) continue;
+        const name = relParts.length ? `${relParts.join('/')}/${ent.name}` : ent.name;
+        withModified.push({
+          name,
+          type: ent.isDirectory() ? 'directory' : 'file',
+          modifiedAt: new Date(stats.mtime).toISOString()
+        });
+        if (ent.isDirectory() && segCount < maxDepth) {
+          await walk(fullPath, [...relParts, ent.name]);
+        }
+      }
+    };
+    await walk(baseDir, []);
+    return withModified;
   }
   const a = await fsp.readdir(directory, { withFileTypes: true });
   const withModified = [];
@@ -654,7 +691,11 @@ Worker.prototype.list = async function ({ directory, start: s, end: e }) {
 };
 Worker.prototype.list.metadata = {
   options: {
-    directory: { required: true }
+    directory: { required: true },
+    depth: {
+      description:
+        'If set, recursively list files and directories up to this path depth (relative to directory); omit for a single-level listing only'
+    }
   }
 };
 Worker.prototype.analyzeDirectory = async function ({ directory }) {

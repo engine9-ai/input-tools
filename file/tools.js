@@ -335,6 +335,15 @@ function parseJSON5(o, defaultVal) {
   }
   return defaultVal || o;
 }
+/** @returns {number|undefined} positive integer max depth, or undefined if absent */
+function normalizeListDepth(depth) {
+  if (depth === undefined || depth === null || depth === '') return undefined;
+  const n = typeof depth === 'number' ? depth : Number.parseInt(String(depth), 10);
+  if (!Number.isFinite(n) || n < 1 || Math.floor(n) !== n) {
+    throw new Error('depth must be a positive integer');
+  }
+  return n;
+}
 export { appendPostfix };
 export { bool };
 export { downloadFile };
@@ -348,6 +357,7 @@ export { getManifest };
 export { getPacketFiles };
 export { getStringArray };
 export { makeStrings };
+export { normalizeListDepth };
 export { parseJSON5 };
 export { relativeDate };
 export { streamPacket };
@@ -366,6 +376,7 @@ export default {
   getPacketFiles,
   getStringArray,
   makeStrings,
+  normalizeListDepth,
   parseJSON5,
   relativeDate,
   streamPacket,
