@@ -233,6 +233,69 @@ Worker.prototype.list.metadata = {
     directory: { required: true }
   }
 };
+Worker.prototype.analyze = async function ({ directory }) {
+  if (!directory) throw new Error('directory is required');
+  let dir = directory;
+  while (dir.slice(-1) === '/') dir = dir.slice(0, -1);
+  const { Bucket, Key } = getParts(dir);
+  const s3Client = this.getClient();
+  let Prefix = '';
+  if (Key) Prefix = `${Key}/`;
+  const dirsSeen = new Set();
+  let fileCount = 0;
+  let firstModified = null;
+  let lastModified = null;
+  let firstTime = null;
+  let lastTime = null;
+  let ContinuationToken = undefined;
+  do {
+    const result = await s3Client.send(
+      new ListObjectsV2Command({
+        Bucket,
+        Prefix,
+        ContinuationToken
+      })
+    );
+    for (const content of result.Contents || []) {
+      const objectKey = content.Key;
+      let rel = Prefix ? (objectKey.startsWith(Prefix) ? objectKey.slice(Prefix.length) : objectKey) : objectKey;
+      if (!rel) continue;
+      const isFolderMarker = rel.endsWith('/');
+      const parts = rel.replace(/\/$/, '').split('/').filter(Boolean);
+      for (let i = 0; i < parts.length - 1; i++) {
+        dirsSeen.add(parts.slice(0, i + 1).join('/'));
+      }
+      if (isFolderMarker) {
+        if (parts.length) dirsSeen.add(parts.join('/'));
+        continue;
+      }
+      fileCount++;
+      const mtime = new Date(content.LastModified).getTime();
+      const modifiedAt = new Date(content.LastModified).toISOString();
+      const filename = `${this.prefix}://${Bucket}/${objectKey}`;
+      if (firstTime === null || mtime < firstTime) {
+        firstTime = mtime;
+        firstModified = { filename, modifiedAt };
+      }
+      if (lastTime === null || mtime > lastTime) {
+        lastTime = mtime;
+        lastModified = { filename, modifiedAt };
+      }
+    }
+    ContinuationToken = result.IsTruncated ? result.NextContinuationToken : undefined;
+  } while (ContinuationToken);
+  return {
+    fileCount,
+    directoryCount: dirsSeen.size,
+    firstModified: fileCount ? firstModified : null,
+    lastModified: fileCount ? lastModified : null
+  };
+};
+Worker.prototype.analyze.metadata = {
+  options: {
+    directory: { required: true }
+  }
+};
 /* List everything with the prefix */
 Worker.prototype.listAll = async function (options) {
   const { directory } = options;

@@ -657,6 +657,54 @@ Worker.prototype.list.metadata = {
     directory: { required: true }
   }
 };
+Worker.prototype.analyze = async function ({ directory }) {
+  if (!directory) throw new Error('directory is required');
+  if (directory.startsWith('s3://') || directory.startsWith('r2://')) {
+    const worker = new (directory.startsWith('r2://') ? R2Worker : S3Worker)(this);
+    return worker.analyze({ directory });
+  }
+  let fileCount = 0;
+  let directoryCount = 0;
+  let firstModified = null;
+  let lastModified = null;
+  let firstTime = null;
+  let lastTime = null;
+  const walk = async (dir) => {
+    const entries = await fsp.readdir(dir, { withFileTypes: true });
+    for (const ent of entries) {
+      const fullPath = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        directoryCount += 1;
+        await walk(fullPath);
+      } else {
+        fileCount += 1;
+        const stats = await fsp.stat(fullPath);
+        const mtime = stats.mtimeMs;
+        const modifiedAt = new Date(stats.mtime).toISOString();
+        if (firstTime === null || mtime < firstTime) {
+          firstTime = mtime;
+          firstModified = { filename: fullPath, modifiedAt };
+        }
+        if (lastTime === null || mtime > lastTime) {
+          lastTime = mtime;
+          lastModified = { filename: fullPath, modifiedAt };
+        }
+      }
+    }
+  };
+  await walk(directory);
+  return {
+    fileCount,
+    directoryCount,
+    firstModified: fileCount ? firstModified : null,
+    lastModified: fileCount ? lastModified : null
+  };
+};
+Worker.prototype.analyze.metadata = {
+  options: {
+    directory: { required: true }
+  }
+};
 Worker.prototype.listAll = async function ({ directory, start: s, end: e }) {
   if (!directory) throw new Error('directory is required');
   let start = null;
