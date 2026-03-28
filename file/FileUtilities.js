@@ -657,11 +657,11 @@ Worker.prototype.list.metadata = {
     directory: { required: true }
   }
 };
-Worker.prototype.analyze = async function ({ directory }) {
+Worker.prototype.analyzeDirectory = async function ({ directory }) {
   if (!directory) throw new Error('directory is required');
   if (directory.startsWith('s3://') || directory.startsWith('r2://')) {
     const worker = new (directory.startsWith('r2://') ? R2Worker : S3Worker)(this);
-    return worker.analyze({ directory });
+    return worker.analyzeDirectory({ directory });
   }
   let fileCount = 0;
   let directoryCount = 0;
@@ -704,7 +704,7 @@ Worker.prototype.analyze = async function ({ directory }) {
     lastModified: fileCount ? lastModified : null
   };
 };
-Worker.prototype.analyze.metadata = {
+Worker.prototype.analyzeDirectory.metadata = {
   options: {
     directory: { required: true }
   }

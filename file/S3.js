@@ -233,7 +233,7 @@ Worker.prototype.list.metadata = {
     directory: { required: true }
   }
 };
-Worker.prototype.analyze = async function ({ directory }) {
+Worker.prototype.analyzeDirectory = async function ({ directory }) {
   if (!directory) throw new Error('directory is required');
   let dir = directory;
   while (dir.slice(-1) === '/') dir = dir.slice(0, -1);
@@ -295,7 +295,7 @@ Worker.prototype.analyze = async function ({ directory }) {
     lastModified: fileCount ? lastModified : null
   };
 };
-Worker.prototype.analyze.metadata = {
+Worker.prototype.analyzeDirectory.metadata = {
   options: {
     directory: { required: true }
   }
