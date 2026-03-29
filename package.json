@@ -2,7 +2,7 @@
   "name": "@engine9/input-tools",
   "version": "2.0.12",
   "type": "module",
-  "description": "Tools for dealing with Engine9 inputs",
+  "description": "Cross-environment utilities for Engine9-style inputs (no server-only or optional-engine coupling; e.g. DuckDB paths belong in the server app)",
   "main": "index.js",
   "scripts": {
     "test-big-data": "export DEBUG=*;node --test --test-name-pattern=big-data",
