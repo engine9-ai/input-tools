@@ -193,21 +193,22 @@ function dateFromString(s) {
   }
   return new Date(s);
 }
-function getUUIDv7(date, inputUuid) {
+function getVersionedUUID(date, reqUuid) {
   /* optional date and input UUID */
-  const uuid = inputUuid || uuidv7();
+  const uuid = reqUuid || uuidv7();
   const bytes = Buffer.from(uuid.replace(/-/g, ''), 'hex');
   if (date !== undefined) {
     const d = dateFromString(date);
     // isNaN behaves differently than Number.isNaN -- we're actually going for the
     // attempted conversion here
-    if (isNaN(d)) throw new Error(`getUUIDv7 got an invalid date:${date || '<blank>'}`);
+    if (isNaN(d)) throw new Error(`getVersionedUUID got an invalid date:${date || '<blank>'}`);
     const dateBytes = intToByteArray(d.getTime()).reverse();
     dateBytes.slice(2, 8).forEach((b, i) => {
       bytes[i] = b;
     });
   }
-  return uuidv4({ random: bytes });
+  const result = uuidv4({ random: bytes });
+  return result.substring(0, 14) + 'e' + result.substring(15, 19) + '1' + result.substring(20);
 }
 /* Returns a date from a given uuid (assumed to be a v7, otherwise the results are ... weird */
 function getUUIDTimestamp(uuid) {
@@ -233,7 +234,7 @@ function getEntryType(o, defaults = {}) {
   if (etype === undefined) throw new Error(`Invalid entry_type: ${etype}`);
   return etype;
 }
-const requiredTimelineEntryFields = ['ts', 'entry_type_id', 'input_id', 'person_id'];
+const requiredTimelineEntryFields = ['ts', 'entry_type_id', 'plugin_id', 'person_id'];
 function getTimelineEntryUUID(inputObject, { defaults = {} } = {}) {
   const o = { ...defaults, ...inputObject };
   /*
@@ -250,15 +251,16 @@ function getTimelineEntryUUID(inputObject, { defaults = {} } = {}) {
           If not, it will be generated using whatever info we have
         */
   if (o.remote_entry_id) {
-    // get a temp ID
-    if (!o.input_id)
-      throw new Error('Error generating timeline entry uuid -- remote_entry_id specified, but no input_id');
+    if (!o.plugin_id)
+      throw new Error('Error generating timeline entry uuid -- remote_entry_id specified, but no plugin_id');
+    if (!uuidIsValid(o.plugin_id))
+      throw new Error(`Invalid plugin_id:'${o.plugin_id}', type ${typeof o.plugin_id} -- should be a uuid`);
     try {
-      const uuid = uuidv5(String(o.remote_entry_id), o.input_id);
+      const uuid = uuidv5(String(o.remote_entry_id), o.plugin_id);
       // Change out the ts to match the v7 sorting.
       // But because outside specified remote_entry_uuid
       // may not match this standard, uuid sorting isn't guaranteed
-      return getUUIDv7(o.ts, uuid);
+      return getVersionedUUID(o.ts, uuid);
     } catch (e) {
       debug('Error getting uuid with object:', o);
       throw e;
@@ -272,15 +274,14 @@ function getTimelineEntryUUID(inputObject, { defaults = {} } = {}) {
   // attempted conversion here
   if (isNaN(ts)) throw new Error(`getTimelineEntryUUID got an invalid date:${o.ts || '<blank>'}`);
   const idString = `${ts.toISOString()}-${o.person_id}-${o.entry_type_id}-${o.source_code_id || 0}`;
-  if (!uuidIsValid(o.input_id)) {
-    throw new Error(`Invalid input_id:'${o.input_id}', type ${typeof o.input_id} -- should be a uuid`);
+  if (!uuidIsValid(o.plugin_id)) {
+    throw new Error(`Invalid plugin_id:'${o.plugin_id}', type ${typeof o.plugin_id} -- should be a uuid`);
   }
-  // get a temp ID
-  const uuid = uuidv5(idString, o.input_id);
+  const uuid = uuidv5(idString, o.plugin_id);
   // Change out the ts to match the v7 sorting.
   // But because outside specified remote_entry_uuid
   // may not match this standard, uuid sorting isn't guaranteed
-  return getUUIDv7(ts, uuid);
+  return getVersionedUUID(ts, uuid);
 }
 function getDateRangeArray(startDate, endDate) {
   const start = new Date(startDate);
@@ -370,7 +371,7 @@ export { getTimelineEntryUUID };
 export { getPacketFiles };
 export { getPluginUUID };
 export { getInputUUID };
-export { getUUIDv7 };
+export { getVersionedUUID };
 export { getUUIDTimestamp };
 export { handlebars };
 export { isValidDate };
@@ -408,7 +409,7 @@ export default {
   getPacketFiles,
   getPluginUUID,
   getInputUUID,
-  getUUIDv7,
+  getVersionedUUID,
   getUUIDTimestamp,
   handlebars,
   isValidDate,

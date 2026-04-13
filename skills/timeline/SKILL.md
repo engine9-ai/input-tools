@@ -15,7 +15,7 @@ Engine9 models person-level activity as **timeline entries**. A timeline entry i
 - **`ts`**: timestamp of the event.
 - **`entry_type_id`**: numeric type from `TIMELINE_ENTRY_TYPES` (`input-tools/timelineTypes.js`).
 - **`person_id`**: internal person identifier.
-- **`input_id`**: which input/source this event came from.
+- **`plugin_id`**: which plugin this event came from (used as UUID namespace).
 - **`id`**: a deterministic UUID derived from the above (via `getTimelineEntryUUID`).
 
 There are **two main on-disk timeline file shapes**:
@@ -35,7 +35,7 @@ There are **two main on-disk timeline file shapes**:
 
 Timeline ID files are typically produced by:
 
-- Plugin or ingestion code that has already resolved a stable `person_id` and `input_id`.
+- Plugin or ingestion code that has already resolved a stable `person_id` and `plugin_id`.
 - Mappers that call `getEntryTypeId` and `getTimelineEntryUUID` from `@engine9/input-tools`.
 
 **Minimum required fields** for a Timeline ID file that downstream workers will accept:
@@ -66,7 +66,7 @@ When authoring a Timeline ID-producing job or plugin using `@engine9/input-tools
 
 - **Always include** `id`, `ts`, `person_id`, and `entry_type_id` on each emitted row.
 - **Prefer numeric `entry_type_id`**, but you may also keep a string `entry_type` for debugging; resolution between the two happens via `TIMELINE_ENTRY_TYPES`, `getEntryTypeId`, and `getEntryType`.
-- **Keep `input_id` stable** per logical input stream; `getTimelineEntryUUID` uses it as the UUID namespace when generating `id`.
+- **Include `plugin_id`**; `getTimelineEntryUUID` uses it as the UUID namespace when generating `id`.
 
 ## Timeline Raw files
 
@@ -114,14 +114,14 @@ The usual pathway for Raw → ID is:
 3. **Assign timeline IDs** with input-tools:
    - Use `getEntryTypeId` (if needed) to ensure `entry_type_id` is set from `TIMELINE_ENTRY_TYPES` when only `entry_type` is present.
    - Call `getTimelineEntryUUID` to:
-     - Require `ts`, `entry_type_id`, `input_id`, and `person_id`.
+     - Require `ts`, `entry_type_id`, `plugin_id`, and `person_id`.
      - Produce a deterministic, sortable UUID for `id`.
 4. **Write out a Timeline ID file** (for example, parquet or CSV) with the full set of fields (`id`, `ts`, `person_id`, `entry_type_id`, optional `source_code_id`, etc.).
 
 ## Choosing between Timeline ID and Timeline Raw
 
 - **Choose Timeline ID files when**:
-  - You can resolve `person_id` and `input_id` in the current process.
+  - You can resolve `person_id` and `plugin_id` in the current process.
   - You want files that are **immediately loadable** into a `timeline` table.
   - You need **deduplication** by a stable `id`.
 
@@ -145,7 +145,7 @@ When working with any timeline format, prefer the utilities in `@engine9/input-t
 - **`TIMELINE_ENTRY_TYPES`** (`timelineTypes.js`): bidirectional map between string entry types and numeric `entry_type_id`.
 - **`getEntryTypeId`**: resolve `entry_type` → `entry_type_id` with validation.
 - **`getEntryType`**: resolve `entry_type_id` → `entry_type`.
-- **`getTimelineEntryUUID`**: generate or normalize `id` given `ts`, `entry_type_id`, `input_id`, and `person_id`, respecting `remote_entry_uuid` / `remote_entry_id` when present.
+- **`getTimelineEntryUUID`**: generate or normalize `id` given `ts`, `entry_type_id`, `plugin_id`, and `person_id`, respecting `remote_entry_uuid` / `remote_entry_id` when present. Uses `plugin_id` as the UUID namespace.
 - **`uuidIsValid`**: validate that a string is a proper UUID.
 
 Use these helpers instead of hard-coding IDs or types whenever you construct timeline rows, whether Raw or ID.

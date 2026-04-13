@@ -1,20 +1,20 @@
 import nodetest from 'node:test';
 import assert from 'node:assert';
 import * as debug$0 from 'debug';
-import { getUUIDv7, getUUIDTimestamp } from '../index.js';
+import { getVersionedUUID, getUUIDTimestamp } from '../index.js';
 const { it } = nodetest;
 const debug = debug$0('message');
 it('Should correctly calculate UUIDS given various inputs', async () => {
   const now = new Date();
-  const uuid = getUUIDv7();
+  const uuid = getVersionedUUID();
   const ts = getUUIDTimestamp(uuid);
   debug(uuid, ts, now);
   const diff = now.getTime() - ts.getTime();
   assert(diff < 1000 && diff >= 0, 'More than a second between newly created');
-  const uuid2 = getUUIDv7(now);
+  const uuid2 = getVersionedUUID(now);
   const ts2 = getUUIDTimestamp(uuid2);
   const diff2 = now.getTime() - ts2.getTime();
   assert(diff2 === 0, 'Timestamps should match');
-  const uuid3 = getUUIDv7(now);
+  const uuid3 = getVersionedUUID(now);
   assert(uuid2 !== uuid3, 'UUIDs should be unique match');
 });

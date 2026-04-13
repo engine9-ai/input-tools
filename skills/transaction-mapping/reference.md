@@ -69,4 +69,4 @@ The mapper must provide (the pipeline derives or resolves the rest):
 - `remote_person_id` (3rd-party payer/donor identifier; pipeline resolves to `person_id`)
 - `entry_type` or `entry_type_id`
 
-The pipeline calculates `input_id` from `remote_page_name` or `remote_input_id`. The inbound transform uses `input_id` and `person_id` (resolved from `remote_person_id`) with `getTimelineEntryUUID` to set `id`. If `remote_entry_uuid` is set and valid, it is used as `id` and the composite is not needed.
+The pipeline calculates `input_id` from `remote_page_name` or `remote_input_id`. The inbound transform uses `plugin_id` and `person_id` (resolved from `remote_person_id`) with `getTimelineEntryUUID` to set `id`. `plugin_id` serves as the UUID namespace. If `remote_entry_uuid` is set and valid, it is used as `id` and the composite is not needed.
