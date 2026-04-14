@@ -208,7 +208,8 @@ function getVersionedUUID(date, reqUuid) {
     });
   }
   const result = uuidv4({ random: bytes });
-  return result.substring(0, 14) + 'e' + result.substring(15, 19) + '1' + result.substring(20);
+  //The version MUST be a supported UUID number, and the variant matters as well
+  return result.substring(0, 14) + '1' + result.substring(15, 19) + '1' + result.substring(20);
 }
 /* Returns a date from a given uuid (assumed to be a v7, otherwise the results are ... weird */
 function getUUIDTimestamp(uuid) {
