@@ -1,6 +1,6 @@
 {
   "name": "@engine9/input-tools",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "type": "module",
   "description": "Cross-environment utilities for Engine9-style inputs (no server-only or optional-engine coupling; e.g. DuckDB paths belong in the server app)",
   "main": "index.js",
@@ -31,7 +31,7 @@
     "parallel-transform": "^1.2.0",
     "throttle-debounce": "^5.0.2",
     "unzipper": "^0.12.1",
-    "uuid": "^11.1.0",
+    "uuid": "^13.0.0",
     "xlstream": "^2.5.5",
     "yargs": "^17.7.2"
   },
