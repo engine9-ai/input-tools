@@ -1,6 +1,6 @@
 {
   "name": "@engine9/input-tools",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "type": "module",
   "description": "Cross-environment utilities for Engine9-style inputs (no server-only or optional-engine coupling; e.g. DuckDB paths belong in the server app)",
   "main": "index.js",

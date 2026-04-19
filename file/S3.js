@@ -187,7 +187,7 @@ Worker.prototype.write.metadata = {
     content: { description: 'Contents of file' }
   }
 };
-Worker.prototype.list = async function ({ directory, start, end, raw, depth: depthOpt }) {
+Worker.prototype.list = async function ({ directory, start, end, raw, depth: depthOpt, postfix }) {
   if (!directory) throw new Error('directory is required');
   let dir = directory;
   while (dir.slice(-1) === '/') dir = dir.slice(0, -1);
@@ -210,7 +210,8 @@ Worker.prototype.list = async function ({ directory, start, end, raw, depth: dep
       Delimiter: '/'
     });
     const { Contents: files, CommonPrefixes } = await s3Client.send(command);
-    if (raw) return files;
+    const filteredFiles = (files || []).filter(({ Key }) => !postfix || Key.endsWith(postfix));
+    if (raw) return filteredFiles;
     const output = []
       .concat(
         (CommonPrefixes || []).map((f) => ({
@@ -219,7 +220,7 @@ Worker.prototype.list = async function ({ directory, start, end, raw, depth: dep
         }))
       )
       .concat(
-        (files || [])
+        filteredFiles
           .filter(({ LastModified }) => {
             if (start && new Date(LastModified) < start) {
               return false;
@@ -280,6 +281,7 @@ Worker.prototype.list = async function ({ directory, start, end, raw, depth: dep
       const rel = relToRoot(Key);
       if (!rel) continue;
       if (rel.split('/').length > maxDepth) continue;
+      if (postfix && !rel.endsWith(postfix)) continue;
       if (start && new Date(LastModified) < start) continue;
       if (end && new Date(LastModified) > end) continue;
       output.push({
@@ -297,6 +299,9 @@ Worker.prototype.list = async function ({ directory, start, end, raw, depth: dep
 Worker.prototype.list.metadata = {
   options: {
     directory: { required: true },
+    postfix: {
+      description: 'Only include files whose key ends with this string'
+    },
     depth: {
       description:
         'If set, recursively list objects and prefixes up to this key depth (relative to directory); omit for a single-level listing only'
