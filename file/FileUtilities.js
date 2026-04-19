@@ -633,7 +633,7 @@ Worker.prototype.json.metadata = {
     filename: { description: 'Get a javascript object from a file' }
   }
 };
-Worker.prototype.list = async function ({ directory, start: s, end: e, depth: depthOpt }) {
+Worker.prototype.list = async function ({ directory, start: s, end: e, depth: depthOpt, postfix }) {
   if (!directory) throw new Error('directory is required');
   let start = null;
   let end = null;
@@ -642,7 +642,7 @@ Worker.prototype.list = async function ({ directory, start: s, end: e, depth: de
   const maxDepth = normalizeListDepth(depthOpt);
   if (directory.startsWith('s3://') || directory.startsWith('r2://')) {
     const worker = new (directory.startsWith('r2://') ? R2Worker : S3Worker)(this);
-    return worker.list({ directory, start, end, depth: maxDepth });
+    return worker.list({ directory, start, end, depth: maxDepth, postfix });
   }
   if (maxDepth) {
     const baseDir = path.resolve(directory);
@@ -657,6 +657,7 @@ Worker.prototype.list = async function ({ directory, start: s, end: e, depth: de
         if (start && stats.mtime < start.getTime()) continue;
         if (end && stats.mtime > end.getTime()) continue;
         const name = relParts.length ? `${relParts.join('/')}/${ent.name}` : ent.name;
+        if (postfix && !ent.isDirectory() && !name.endsWith(postfix)) continue;
         withModified.push({
           name,
           type: ent.isDirectory() ? 'directory' : 'file',
@@ -680,6 +681,7 @@ Worker.prototype.list = async function ({ directory, start: s, end: e, depth: de
     } else if (end && stats.mtime > end.getTime()) {
       //do nothing
     } else {
+      if (postfix && !file.isDirectory() && !file.name.endsWith(postfix)) continue;
       withModified.push({
         name: file.name,
         type: file.isDirectory() ? 'directory' : 'file',
@@ -692,6 +694,9 @@ Worker.prototype.list = async function ({ directory, start: s, end: e, depth: de
 Worker.prototype.list.metadata = {
   options: {
     directory: { required: true },
+    postfix: {
+      description: 'Only include files whose path ends with this string'
+    },
     depth: {
       description:
         'If set, recursively list files and directories up to this path depth (relative to directory); omit for a single-level listing only'
