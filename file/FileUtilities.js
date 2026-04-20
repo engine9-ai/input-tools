@@ -10,6 +10,7 @@ import JSON5 from 'json5';
 import languageEncoding from 'detect-file-encoding-and-language';
 import R2Worker from './R2.js';
 import S3Worker from './S3.js';
+import GoogleDriveWorker from './GoogleDrive.js';
 import ParquetWorker from './Parquet.js';
 import {
   bool,
@@ -31,6 +32,30 @@ const { getXlsxStream } = xlstream;
 
 function Worker({ accountId }) {
   this.accountId = accountId;
+}
+/*
+Return the remote-service worker for a given path, or null if it's a local path.
+Keeps the s3:///r2:///gdrive:// branching consistent across FileUtilities.
+*/
+function isRemote(p) {
+  return (
+    typeof p === 'string' &&
+    (p.startsWith('s3://') || p.startsWith('r2://') || p.startsWith('gdrive://'))
+  );
+}
+function getServiceWorker(owner, p) {
+  if (typeof p !== 'string') return null;
+  if (p.startsWith('s3://')) return new S3Worker(owner);
+  if (p.startsWith('r2://')) return new R2Worker(owner);
+  if (p.startsWith('gdrive://')) return new GoogleDriveWorker(owner);
+  return null;
+}
+function getServicePrefix(p) {
+  if (typeof p !== 'string') return null;
+  if (p.startsWith('s3://')) return 's3';
+  if (p.startsWith('r2://')) return 'r2';
+  if (p.startsWith('gdrive://')) return 'gdrive';
+  return null;
 }
 class LineReaderTransform extends Transform {
   constructor(options = {}) {
@@ -150,17 +175,17 @@ Worker.prototype.detectEncoding.metadata = {
 };
 Worker.prototype.xlsxToObjectStream = async function (options) {
   let { filename } = options;
-  if (filename.startsWith('s3://') || filename.startsWith('r2://')) {
-    // We need to copy and delete
-    let worker = null;
-    if (filename.startsWith('r2://')) {
-      worker = new R2Worker(this);
+  if (isRemote(filename)) {
+    // We need to copy locally first so xlstream can read from disk
+    const worker = getServiceWorker(this, filename);
+    if (filename.startsWith('gdrive://')) {
+      const { filename: local } = await worker.download({ filename });
+      filename = local;
     } else {
-      worker = new S3Worker(this);
+      const target = getTempFilename({ targetFilename: filename.split('/').pop() });
+      await worker.copy({ filename, target });
+      filename = target;
     }
-    const target = getTempFilename({ targetFilename: filename.split('/').pop() });
-    await worker.copy({ filename, target });
-    filename = target;
   }
   let stream = await getXlsxStream({
     filePath: filename,
@@ -526,13 +551,9 @@ Worker.prototype.stream = async function (options) {
       const pq = new ParquetWorker(this);
       stream = (await pq.stream({ filename, columns, limit })).stream;
       encoding = 'object';
-    } else if (filename.startsWith('s3://')) {
-      const s3Worker = new S3Worker(this);
-      stream = (await s3Worker.stream({ filename, columns, limit })).stream;
-      encoding = 'UTF-8';
-    } else if (filename.startsWith('r2://')) {
-      const r2Worker = new R2Worker(this);
-      stream = (await r2Worker.stream({ filename, columns, limit })).stream;
+    } else if (isRemote(filename)) {
+      const serviceWorker = getServiceWorker(this, filename);
+      stream = (await serviceWorker.stream({ filename, columns, limit })).stream;
       encoding = 'UTF-8';
     } else {
       // Check if the file exists, and fast fail if not
@@ -583,8 +604,8 @@ Worker.prototype.toArray.metadata = {
 };
 Worker.prototype.write = async function (opts) {
   const { filename, content } = opts;
-  if (filename.startsWith('s3://') || filename.startsWith('r2://')) {
-    const worker = new (filename.startsWith('r2://') ? R2Worker : S3Worker)(this);
+  if (isRemote(filename)) {
+    const worker = getServiceWorker(this, filename);
     const parts = filename.split('/');
     const directory = parts.slice(0, -1).join('/');
     const file = parts.slice(-1)[0];
@@ -603,7 +624,9 @@ Worker.prototype.write = async function (opts) {
 };
 Worker.prototype.write.metadata = {
   options: {
-    filename: { description: 'Location to write content to, can be local or s3:// or r2://' },
+    filename: {
+      description: 'Location to write content to, can be local or s3:// or r2:// or gdrive://'
+    },
     content: {}
   }
 };
@@ -640,8 +663,8 @@ Worker.prototype.list = async function ({ directory, start: s, end: e, depth: de
   if (s) start = relativeDate(s);
   if (e) end = relativeDate(e);
   const maxDepth = normalizeListDepth(depthOpt);
-  if (directory.startsWith('s3://') || directory.startsWith('r2://')) {
-    const worker = new (directory.startsWith('r2://') ? R2Worker : S3Worker)(this);
+  if (isRemote(directory)) {
+    const worker = getServiceWorker(this, directory);
     return worker.list({ directory, start, end, depth: maxDepth, postfix });
   }
   if (maxDepth) {
@@ -705,8 +728,8 @@ Worker.prototype.list.metadata = {
 };
 Worker.prototype.analyzeDirectory = async function ({ directory }) {
   if (!directory) throw new Error('directory is required');
-  if (directory.startsWith('s3://') || directory.startsWith('r2://')) {
-    const worker = new (directory.startsWith('r2://') ? R2Worker : S3Worker)(this);
+  if (isRemote(directory)) {
+    const worker = getServiceWorker(this, directory);
     return worker.analyzeDirectory({ directory });
   }
   let fileCount = 0;
@@ -761,8 +784,8 @@ Worker.prototype.listAll = async function ({ directory, start: s, end: e }) {
   let end = null;
   if (s) start = relativeDate(s).getTime();
   if (e) end = relativeDate(e).getTime();
-  if (directory.startsWith('s3://') || directory.startsWith('r2://')) {
-    const worker = new (directory.startsWith('r2://') ? R2Worker : S3Worker)(this);
+  if (isRemote(directory)) {
+    const worker = getServiceWorker(this, directory);
     return worker.listAll({ directory, start, end });
   }
   const a = await fsp.readdir(directory, { recursive: true });
@@ -803,8 +826,8 @@ Worker.prototype.listAll.metadata = {
 Worker.prototype.moveAll = async function (options) {
   const { directory, targetDirectory } = options;
   if (!directory) throw new Error('directory is required');
-  if (directory.startsWith('s3://') || directory.startsWith('r2://')) {
-    const worker = new (directory.startsWith('r2://') ? R2Worker : S3Worker)(this);
+  if (isRemote(directory)) {
+    const worker = getServiceWorker(this, directory);
     return worker.moveAll(options);
   }
   const a = await this.listAll(options);
@@ -827,9 +850,9 @@ Worker.prototype.moveAll.metadata = {
 };
 Worker.prototype.empty = async function ({ directory }) {
   if (!directory) throw new Error('directory is required');
-  if (directory.startsWith('s3://') || directory.startsWith('r2://')) {
-    // currently not emptying S3 this way -- dangerous
-    throw new Error('Cannot empty an s3:// or r2:// directory');
+  if (isRemote(directory)) {
+    // currently not emptying remote directories this way -- dangerous
+    throw new Error('Cannot empty an s3://, r2://, or gdrive:// directory');
   }
   const removed = [];
   for (const file of await fsp.readdir(directory)) {
@@ -859,13 +882,8 @@ Worker.prototype.removeAll.metadata = {
 Worker.prototype.remove = async function ({ filename }) {
   if (!filename) throw new Error('filename is required');
   if (typeof filename !== 'string') throw new Error(`filename isn't a string:${JSON.stringify(filename)}`);
-  if (filename.startsWith('s3://') || filename.startsWith('r2://')) {
-    let worker = null;
-    if (filename.startsWith('r2://')) {
-      worker = new R2Worker(this);
-    } else {
-      worker = new S3Worker(this);
-    }
+  if (isRemote(filename)) {
+    const worker = getServiceWorker(this, filename);
     await worker.remove({ filename });
   } else {
     fsp.unlink(filename);
@@ -880,27 +898,29 @@ Worker.prototype.remove.metadata = {
 Worker.prototype.move = async function ({ filename, target, remove = true }) {
   if (!target) throw new Error('target is required');
   if (typeof target !== 'string') throw new Error(`target isn't a string:${JSON.stringify(target)}`);
-  if (target.startsWith('s3://') || target.startsWith('r2://')) {
-    if (
-      (target.startsWith('s3://') && filename.startsWith('r2://')) ||
-      (target.startsWith('r2://') && filename.startsWith('s3://'))
-    ) {
+  const targetPrefix = getServicePrefix(target);
+  const sourcePrefix = getServicePrefix(filename);
+  if (targetPrefix) {
+    if (sourcePrefix && sourcePrefix !== targetPrefix) {
       throw new Error('Cowardly not copying between services');
     }
-    let worker = null;
-    if (target.startsWith('r2://')) {
-      worker = new R2Worker(this);
-    } else {
-      worker = new S3Worker(this);
-    }
-    if (filename.startsWith('s3://') || filename.startsWith('r2://')) {
-      // We need to copy and delete
+    const worker = getServiceWorker(this, target);
+    if (sourcePrefix) {
+      // Within the same service: copy and (optionally) delete
       const output = await worker.copy({ filename, target });
       if (remove) await worker.remove({ filename });
       return output;
     }
+    // Local source -> remote target
     const parts = target.split('/');
-    return worker.put({ filename, directory: parts.slice(0, -1).join('/'), file: parts.slice(-1)[0] });
+    return worker.put({
+      filename,
+      directory: parts.slice(0, -1).join('/'),
+      file: parts.slice(-1)[0]
+    });
+  }
+  if (sourcePrefix) {
+    throw new Error('Cannot move a remote file to a local path via move; use download instead');
   }
   await fsp.mkdir(path.dirname(target), { recursive: true });
   if (remove) {
@@ -940,8 +960,8 @@ Worker.prototype.stat = async function ({ filename }) {
     output.schema = (await pq.schema({ filename }))?.schema;
     output.records = (await pq.meta({ filename }))?.records;
   }
-  if (filename.startsWith('s3://') || filename.startsWith('r2://')) {
-    const worker = new (filename.startsWith('r2://') ? R2Worker : S3Worker)(this);
+  if (isRemote(filename)) {
+    const worker = getServiceWorker(this, filename);
     Object.assign(output, await worker.stat({ filename }));
   } else {
     const { ctime, birthtime, size } = await fsp.stat(filename);
@@ -964,8 +984,8 @@ Worker.prototype.stat.metadata = {
 };
 Worker.prototype.download = async function ({ filename }) {
   if (!filename) throw new Error('filename is required');
-  if (filename.startsWith('s3://') || filename.startsWith('r2://')) {
-    const worker = new (filename.startsWith('r2://') ? R2Worker : S3Worker)(this);
+  if (isRemote(filename)) {
+    const worker = getServiceWorker(this, filename);
     return worker.download({ filename });
   }
   throw new Error('Cannot download a local file');
