@@ -630,6 +630,41 @@ Worker.prototype.write.metadata = {
     content: {}
   }
 };
+Worker.prototype.put = async function (opts) {
+  const { filename, directory, file, target } = opts;
+  if (!filename) throw new Error('filename is required');
+  if (isRemote(filename)) throw new Error('put expects a local path as filename (source file to upload)');
+  let directoryResolved;
+  let fileResolved;
+  if (target) {
+    if (!isRemote(target)) throw new Error('target must be s3://, r2://, or gdrive://');
+    const parts = target.split('/');
+    directoryResolved = parts.slice(0, -1).join('/');
+    fileResolved = parts.slice(-1)[0] || path.basename(filename);
+  } else {
+    if (!directory) throw new Error('directory or target is required');
+    if (!isRemote(directory)) throw new Error('directory must be s3://, r2://, or gdrive://');
+    directoryResolved = directory;
+    fileResolved = file ?? path.basename(filename);
+  }
+  const worker = getServiceWorker(this, directoryResolved);
+  if (!worker) throw new Error('put destination must use s3://, r2://, or gdrive://');
+  return worker.put({
+    filename,
+    directory: directoryResolved,
+    file: fileResolved
+  });
+};
+Worker.prototype.put.metadata = {
+  options: {
+    filename: { description: 'Local file path to upload' },
+    target: {
+      description: 'Full remote destination URI (s3://, r2://, or gdrive://…/objectName); alternative to directory+file'
+    },
+    directory: { description: 'Remote folder/prefix (s3://, r2://, or gdrive://…); use with file or rely on local basename' },
+    file: { description: 'Remote object/file name; defaults to the local file basename' }
+  }
+};
 async function streamToString(stream) {
   // lets have a ReadableStream as a stream variable
   const chunks = [];
@@ -912,12 +947,7 @@ Worker.prototype.move = async function ({ filename, target, remove = true }) {
       return output;
     }
     // Local source -> remote target
-    const parts = target.split('/');
-    return worker.put({
-      filename,
-      directory: parts.slice(0, -1).join('/'),
-      file: parts.slice(-1)[0]
-    });
+    return this.put({ filename, target });
   }
   if (sourcePrefix) {
     throw new Error('Cannot move a remote file to a local path via move; use download instead');
