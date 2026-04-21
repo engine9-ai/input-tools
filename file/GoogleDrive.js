@@ -111,7 +111,11 @@ Worker.prototype.setAuth = async function () {
 Worker.prototype.getClient = async function () {
     if (!this.client) {
         await this.setAuth();
-        this.client = google.drive({ version: 'v3' });
+        // Default query params so Shared Drive files work on every files.* call.
+        this.client = google.drive({
+            version: 'v3',
+            params: { supportsAllDrives: true }
+        });
     }
     return this.client;
 };
@@ -130,7 +134,6 @@ Worker.prototype.findFileId = async function ({ folderId, file }) {
         q,
         pageSize: 2,
         fields: 'files(id, name, mimeType, size, modifiedTime, createdTime)',
-        supportsAllDrives: true,
         includeItemsFromAllDrives: true
     });
     const files = resp.data?.files || [];
@@ -156,7 +159,6 @@ Worker.prototype._listFolderRaw = async function ({ folderId, pageSize = 200 }) 
             pageToken,
             fields:
                 'nextPageToken, files(id, name, mimeType, size, modifiedTime, createdTime)',
-            supportsAllDrives: true,
             includeItemsFromAllDrives: true
         });
         files.push(...(resp.data?.files || []));
@@ -280,7 +282,7 @@ Worker.prototype.stream = async function ({ filename }) {
     if (!match) throw new Error(`No file named ${file} found in folder ${folderId}`);
     debug(`Streaming file gdrive://${folderId}/${file} (id=${match.id})`);
     const response = await drive.files.get(
-        { fileId: match.id, alt: 'media', supportsAllDrives: true },
+        { fileId: match.id, alt: 'media' },
         { responseType: 'stream' }
     );
     return { stream: response.data };
@@ -320,14 +322,12 @@ Worker.prototype._upload = async function ({ folderId, file, mimeType, body }) {
     if (existing) {
         const resp = await drive.files.update({
             fileId: existing.id,
-            supportsAllDrives: true,
             media: { mimeType, body },
             fields: 'id, name, parents, size, modifiedTime'
         });
         return resp.data;
     }
     const resp = await drive.files.create({
-        supportsAllDrives: true,
         requestBody: {
             name: file,
             parents: [folderId]
@@ -390,7 +390,7 @@ Worker.prototype.remove = async function ({ filename }) {
         debug(`No file named ${file} found in folder ${folderId}; nothing to remove`);
         return { removed: filename };
     }
-    await drive.files.delete({ fileId: match.id, supportsAllDrives: true });
+    await drive.files.delete({ fileId: match.id });
     return { removed: filename };
 };
 Worker.prototype.remove.metadata = {
@@ -414,11 +414,10 @@ Worker.prototype.copy = async function ({ filename, target }) {
     const existing = await this.findFileId({ folderId: dstFolderId, file: dstFile });
     if (existing) {
         // Overwrite by removing existing destination file first.
-        await drive.files.delete({ fileId: existing.id, supportsAllDrives: true });
+        await drive.files.delete({ fileId: existing.id });
     }
     const resp = await drive.files.copy({
         fileId: match.id,
-        supportsAllDrives: true,
         requestBody: {
             name: dstFile,
             parents: [dstFolderId]
@@ -450,11 +449,10 @@ Worker.prototype.move = async function ({ filename, target }) {
     // so the rename/reparent doesn't collide.
     const existing = await this.findFileId({ folderId: dstFolderId, file: dstFile });
     if (existing && existing.id !== match.id) {
-        await drive.files.delete({ fileId: existing.id, supportsAllDrives: true });
+        await drive.files.delete({ fileId: existing.id });
     }
     const resp = await drive.files.update({
         fileId: match.id,
-        supportsAllDrives: true,
         addParents: dstFolderId,
         removeParents: srcFolderId,
         requestBody: { name: dstFile },
