@@ -941,7 +941,11 @@ Worker.prototype.move = async function ({ filename, target, remove = true }) {
     }
     const worker = getServiceWorker(this, target);
     if (sourcePrefix) {
-      // Within the same service: copy and (optionally) delete
+      // Prefer service-native move (e.g. Drive reparent/rename) instead of copy+delete,
+      // which can leave duplicates if delete fails and surfaces misleading "permission" errors.
+      if (remove && typeof worker.move === 'function') {
+        return worker.move({ filename, target });
+      }
       const output = await worker.copy({ filename, target });
       if (remove) await worker.remove({ filename });
       return output;

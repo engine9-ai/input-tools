@@ -451,6 +451,16 @@ Worker.prototype.move = async function ({ filename, target }) {
     if (existing && existing.id !== match.id) {
         await drive.files.delete({ fileId: existing.id });
     }
+    // Same-folder rename: only update the name. addParents/removeParents with the same
+    // folder id is unnecessary and can confuse Shared Drives / restricted folders.
+    if (srcFolderId === dstFolderId) {
+        const resp = await drive.files.update({
+            fileId: match.id,
+            requestBody: { name: dstFile },
+            fields: 'id, name, parents, size, modifiedTime'
+        });
+        return { filename: target, ...resp.data };
+    }
     const resp = await drive.files.update({
         fileId: match.id,
         addParents: dstFolderId,
