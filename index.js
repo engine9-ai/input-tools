@@ -13,7 +13,7 @@ import { TIMELINE_ENTRY_TYPES } from './timelineTypes.js';
 const debug = debug$0('@engine9/input-tools');
 
 const {
-  appendPostfix,
+  appendFileStatus,
   bool,
   getBatchTransform,
   getDebatchTransform,
@@ -350,7 +350,7 @@ class ObjectError extends Error {
     }
   }
 }
-export { appendPostfix };
+export { appendFileStatus };
 export { bool };
 export { create };
 export { list };
@@ -388,7 +388,7 @@ export { uuidv4 };
 export { uuidv5 };
 export { uuidv7 };
 export default {
-  appendPostfix,
+  appendFileStatus,
   bool,
   create,
   list,

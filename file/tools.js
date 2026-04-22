@@ -312,7 +312,7 @@ function getFilePostfix(filename) {
   }
   return base.slice(base.lastIndexOf('.'));
 }
-function appendPostfix(filename, postfix) {
+function appendFileStatus(filename, postfix) {
   const filenameParts = filename.split('/');
   const fileParts = filenameParts
     .slice(-1)[0]
@@ -344,7 +344,7 @@ function normalizeListDepth(depth) {
   }
   return n;
 }
-export { appendPostfix };
+export { appendFileStatus };
 export { bool };
 export { downloadFile };
 export { getTempFilename };
@@ -363,7 +363,7 @@ export { relativeDate };
 export { streamPacket };
 export { writeTempFile };
 export default {
-  appendPostfix,
+  appendFileStatus,
   bool,
   downloadFile,
   getTempFilename,
