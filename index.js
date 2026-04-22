@@ -217,10 +217,11 @@ function getUUIDTimestamp(uuid) {
   return new Date(ts);
 }
 function getEntryTypeId(o, { defaults = {} } = {}) {
-  let id = o.entry_type_id || defaults.entry_type_id;
-  if (id) return id;
+  let id = o.entry_type_id ?? defaults.entry_type_id;
+  if (id !== undefined && id !== null) return id;
   const etype = o.entry_type || defaults.entry_type;
   if (!etype) {
+    debug('Invalid input:', o, { defaults });
     throw new Error('No entry_type, nor entry_type_id specified, specify one to generate a timeline suitable ID');
   }
   id = TIMELINE_ENTRY_TYPES[etype];
@@ -230,7 +231,7 @@ function getEntryTypeId(o, { defaults = {} } = {}) {
 function getEntryType(o, defaults = {}) {
   let etype = o.entry_type || defaults.entry_type;
   if (etype) return etype;
-  const id = o.entry_type_id || defaults.entry_type_id;
+  const id = o.entry_type_id ?? defaults.entry_type_id;
   etype = TIMELINE_ENTRY_TYPES[id];
   if (etype === undefined) throw new Error(`Invalid entry_type: ${etype}`);
   return etype;
