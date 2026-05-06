@@ -10,6 +10,7 @@ import FileUtilities from './file/FileUtilities.js';
 import tools from './file/tools.js';
 import ForEachEntry from './ForEachEntry.js';
 import { TIMELINE_ENTRY_TYPES } from './timelineTypes.js';
+import { checkUnicode, collectInvalidUnicodeValues } from './checkUnicode.js';
 const debug = debug$0('@engine9/input-tools');
 
 const {
@@ -353,6 +354,8 @@ class ObjectError extends Error {
 }
 export { appendFileStatus };
 export { bool };
+export { checkUnicode };
+export { collectInvalidUnicodeValues };
 export { create };
 export { list };
 export { downloadFile };
@@ -391,6 +394,8 @@ export { uuidv7 };
 export default {
   appendFileStatus,
   bool,
+  checkUnicode,
+  collectInvalidUnicodeValues,
   create,
   list,
   downloadFile,
