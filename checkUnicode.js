@@ -5,6 +5,11 @@
 
 const PRINTABLE_ASCII_MIN = 0x20;
 const PRINTABLE_ASCII_MAX = 0x7e;
+const ALLOWED_NON_ASCII_CODE_POINTS = new Set([
+  0x2018, // LEFT SINGLE QUOTATION MARK
+  0x2019, // RIGHT SINGLE QUOTATION MARK
+  0x2026 // HORIZONTAL ELLIPSIS
+]);
 
 const INVISIBLE_DELETE_WHEN_REPAIR = new Set([
   0x200b, // ZWSP
@@ -122,7 +127,7 @@ function findPrintableAsciiViolation(s) {
   for (let i = 0; i < s.length; ) {
     const cp = s.codePointAt(i);
     const len = cp > 0xffff ? 2 : 1;
-    if (cp < PRINTABLE_ASCII_MIN || cp > PRINTABLE_ASCII_MAX) {
+    if (cp < PRINTABLE_ASCII_MIN || (cp > PRINTABLE_ASCII_MAX && !ALLOWED_NON_ASCII_CODE_POINTS.has(cp))) {
       return {
         index: i,
         codePoint: cp,

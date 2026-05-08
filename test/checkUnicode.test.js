@@ -21,6 +21,18 @@ describe('checkUnicode', () => {
     assert.strictEqual(r.violation.reason, 'non_printable_ascii');
   });
 
+  it('accepts right single quotation mark U+2019', () => {
+    assert.deepStrictEqual(checkUnicode('O\u2019Brien'), { ok: true, value: 'O\u2019Brien' });
+  });
+
+  it('accepts left single quotation mark U+2018', () => {
+    assert.deepStrictEqual(checkUnicode('\u2018quoted'), { ok: true, value: '\u2018quoted' });
+  });
+
+  it('accepts horizontal ellipsis U+2026', () => {
+    assert.deepStrictEqual(checkUnicode('wait\u2026now'), { ok: true, value: 'wait\u2026now' });
+  });
+
   it('rejects mathematical alphanumeric unless clean:true', () => {
     const boldK = '\u{1D40A}'; // MATHEMATICAL BOLD CAPITAL K
     const boldThree = '\u{1D7EF}'; // MATHEMATICAL SANS-SERIF BOLD DIGIT THREE
