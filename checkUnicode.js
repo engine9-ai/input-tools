@@ -150,8 +150,8 @@ const DEFAULT_MAX_SAMPLE_VALUE_LEN = 200;
  * Validate `value` for printable ASCII (and optional max length). Used internally by {@link checkUnicode}
  * and {@link collectInvalidUnicodeValues}.
  *
- * When `clean` is true: replace common Unicode typos/homoglyphs, then truncate to `maxLength` if given,
- * then validate.
+ * When `clean` is true: trim surrounding whitespace, replace common Unicode typos/homoglyphs,
+ * then truncate to `maxLength` if given, then validate.
  *
  * @param {unknown} value
  * @param {CheckUnicodeOptions} [options]
@@ -164,6 +164,7 @@ function runUnicodeCheck(value, options = {}) {
   const rawValue = String(value);
   let s = rawValue;
   if (clean) {
+    s = s.trim();
     s = applyReplaceCommonTypos(s);
     if (maxLength != null && s.length > maxLength) {
       s = s.slice(0, maxLength);

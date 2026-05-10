@@ -59,6 +59,13 @@ describe('checkUnicode', () => {
     assert.deepStrictEqual(checkUnicode(`X\uFF2BY`, { clean: true }), { ok: true, value: 'XKY' });
   });
 
+  it('clean:true trims surrounding whitespace and tabs', () => {
+    assert.deepStrictEqual(checkUnicode('\t  ABC_123 \t', { clean: true }), {
+      ok: true,
+      value: 'ABC_123'
+    });
+  });
+
   it('rejects maxLength when clean is false', () => {
     const r = checkUnicode('abcd', { maxLength: 3 });
     assert.strictEqual(r.ok, false);
