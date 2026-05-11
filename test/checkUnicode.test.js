@@ -59,6 +59,17 @@ describe('checkUnicode', () => {
     assert.deepStrictEqual(checkUnicode(`X\uFF2BY`, { clean: true }), { ok: true, value: 'XKY' });
   });
 
+  it('clean:true maps unicode dashes to ASCII hyphen', () => {
+    assert.deepStrictEqual(checkUnicode('A\u2013B', { clean: true }), { ok: true, value: 'A-B' });
+    assert.deepStrictEqual(checkUnicode('A\u2014B', { clean: true }), { ok: true, value: 'A-B' });
+  });
+
+  it('clean:true maps replacement character U+FFFD to ASCII space', () => {
+    assert.deepStrictEqual(checkUnicode('A\uFFFDB', { clean: true }), { ok: true, value: 'A B' });
+    assert.deepStrictEqual(checkUnicode('foo\uFFFDbar', { clean: true }), { ok: true, value: 'foo bar' });
+    assert.deepStrictEqual(checkUnicode('\uFFFDtrim', { clean: true }), { ok: true, value: 'trim' });
+  });
+
   it('clean:true trims surrounding whitespace and tabs', () => {
     assert.deepStrictEqual(checkUnicode('\t  ABC_123 \t', { clean: true }), {
       ok: true,

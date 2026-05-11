@@ -61,6 +61,12 @@ function mapDigit10(cp, base) {
  * @returns {string | null}
  */
 function typoReplacementCodePoint(cp) {
+  // Normalize common unicode dash variants to ASCII hyphen-minus.
+  if (cp === 0x2010 || cp === 0x2011 || cp === 0x2012 || cp === 0x2013 || cp === 0x2014 || cp === 0x2015) {
+    return '-';
+  }
+  if (cp === 0x2212) return '-'; // MINUS SIGN
+  if (cp === 0xfffd) return ' '; // REPLACEMENT CHARACTER (often shown as) -> ASCII space
   for (const base of DIGIT_BLOCK_STARTS) {
     const d = mapDigit10(cp, base);
     if (d !== null) return d;
@@ -151,6 +157,7 @@ const DEFAULT_MAX_SAMPLE_VALUE_LEN = 200;
  * and {@link collectInvalidUnicodeValues}.
  *
  * When `clean` is true: trim surrounding whitespace, replace common Unicode typos/homoglyphs,
+ * trim again (so replacement characters mapped to space do not leave stray leading/trailing spaces),
  * then truncate to `maxLength` if given, then validate.
  *
  * @param {unknown} value
@@ -166,6 +173,7 @@ function runUnicodeCheck(value, options = {}) {
   if (clean) {
     s = s.trim();
     s = applyReplaceCommonTypos(s);
+    s = s.trim();
     if (maxLength != null && s.length > maxLength) {
       s = s.slice(0, maxLength);
     }
