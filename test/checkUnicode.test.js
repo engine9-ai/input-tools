@@ -110,4 +110,16 @@ describe('checkUnicode', () => {
   it('clean:true maps U+1D7FB to ASCII digit (monospace five)', () => {
     assert.deepStrictEqual(checkUnicode('\u{1D7FB}', { clean: true }), { ok: true, value: '5' });
   });
+
+  it('clean:true maps Latin-1 / symbol punctuation outside ASCII to underscore', () => {
+    assert.deepStrictEqual(checkUnicode('a\u00b1b', { clean: true }), { ok: true, value: 'a_b' });
+    assert.deepStrictEqual(checkUnicode('90\u00b0', { clean: true }), { ok: true, value: '90_' });
+    assert.deepStrictEqual(checkUnicode('x\u00d7y', { clean: true }), { ok: true, value: 'x_y' });
+    assert.deepStrictEqual(checkUnicode('x\u00f7y', { clean: true }), { ok: true, value: 'x_y' });
+    assert.deepStrictEqual(checkUnicode('a\u{1F600}b', { clean: true }), { ok: true, value: 'a_b' });
+  });
+
+  it('clean:true maps NBSP to ordinary space', () => {
+    assert.deepStrictEqual(checkUnicode('a\u00a0b', { clean: true }), { ok: true, value: 'a b' });
+  });
 });

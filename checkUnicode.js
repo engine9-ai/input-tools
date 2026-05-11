@@ -87,6 +87,32 @@ function typoReplacementCodePoint(cp) {
  * @param {string} s
  * @returns {string}
  */
+/**
+ * After NFKD + mark stripping, map anything still outside printable ASCII (except the small
+ * allowlist used for validation) to `_`, so {@link checkUnicode} with `clean: true` can succeed.
+ * NO-BREAK SPACE maps to ordinary space.
+ * @param {string} s
+ * @returns {string}
+ */
+function replaceNonAsciiAllowedWithUnderscore(s) {
+  let result = '';
+  for (let i = 0; i < s.length; ) {
+    const cp = s.codePointAt(i);
+    const w = cp > 0xffff ? 2 : 1;
+    if (cp === 0x00a0) {
+      result += ' ';
+    } else if (cp >= PRINTABLE_ASCII_MIN && cp <= PRINTABLE_ASCII_MAX) {
+      result += String.fromCodePoint(cp);
+    } else if (ALLOWED_NON_ASCII_CODE_POINTS.has(cp)) {
+      result += String.fromCodePoint(cp);
+    } else {
+      result += '_';
+    }
+    i += w;
+  }
+  return result;
+}
+
 function applyReplaceCommonTypos(s) {
   let out = '';
   for (let i = 0; i < s.length; ) {
@@ -101,7 +127,8 @@ function applyReplaceCommonTypos(s) {
     else out += String.fromCodePoint(cp);
     i += w;
   }
-  return out.normalize('NFKD').replace(/\p{M}/gu, '');
+  const normalized = out.normalize('NFKD').replace(/\p{M}/gu, '');
+  return replaceNonAsciiAllowedWithUnderscore(normalized);
 }
 
 /**
@@ -157,6 +184,7 @@ const DEFAULT_MAX_SAMPLE_VALUE_LEN = 200;
  * and {@link collectInvalidUnicodeValues}.
  *
  * When `clean` is true: trim surrounding whitespace, replace common Unicode typos/homoglyphs,
+ * map any remaining non-ASCII (outside the small punctuation allowlist) to `_` (NBSP → space),
  * trim again (so replacement characters mapped to space do not leave stray leading/trailing spaces),
  * then truncate to `maxLength` if given, then validate.
  *
