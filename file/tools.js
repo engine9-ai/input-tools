@@ -356,6 +356,7 @@ export { getFilePostfix };
 export { getManifest };
 export { getPacketFiles };
 export { getStringArray };
+export { isValidDate };
 export { makeStrings };
 export { normalizeListDepth };
 export { parseJSON5 };
@@ -375,6 +376,7 @@ export default {
   getManifest,
   getPacketFiles,
   getStringArray,
+  isValidDate,
   makeStrings,
   normalizeListDepth,
   parseJSON5,
