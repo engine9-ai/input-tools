@@ -21,12 +21,12 @@ describe('checkUnicode', () => {
     assert.strictEqual(r.violation.reason, 'non_printable_ascii');
   });
 
-  it('accepts right single quotation mark U+2019', () => {
-    assert.deepStrictEqual(checkUnicode('O\u2019Brien'), { ok: true, value: 'O\u2019Brien' });
+  it('maps right single quotation mark U+2019 to ASCII apostrophe', () => {
+    assert.deepStrictEqual(checkUnicode('O\u2019Brien'), { ok: true, value: "O'Brien" });
   });
 
-  it('accepts left single quotation mark U+2018', () => {
-    assert.deepStrictEqual(checkUnicode('\u2018quoted'), { ok: true, value: '\u2018quoted' });
+  it('maps left single quotation mark U+2018 to ASCII apostrophe', () => {
+    assert.deepStrictEqual(checkUnicode('\u2018quoted'), { ok: true, value: "'quoted" });
   });
 
   it('accepts horizontal ellipsis U+2026', () => {

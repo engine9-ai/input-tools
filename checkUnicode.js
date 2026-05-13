@@ -1,13 +1,12 @@
 /**
  * Printable ASCII validation for identifier-like strings (U+0020–U+007E).
- * Internal typo repair maps mathematical / fullwidth characters to ASCII when `clean` is true.
+ * U+2018/U+2019 map to ASCII apostrophe before validation. Internal typo repair maps other
+ * mathematical / fullwidth characters to ASCII when `clean` is true.
  */
 
 const PRINTABLE_ASCII_MIN = 0x20;
 const PRINTABLE_ASCII_MAX = 0x7e;
 const ALLOWED_NON_ASCII_CODE_POINTS = new Set([
-  0x2018, // LEFT SINGLE QUOTATION MARK
-  0x2019, // RIGHT SINGLE QUOTATION MARK
   0x2026 // HORIZONTAL ELLIPSIS
 ]);
 
@@ -19,6 +18,23 @@ const INVISIBLE_DELETE_WHEN_REPAIR = new Set([
   0x2060, // WORD JOINER
   0x00ad // SOFT HYPHEN
 ]);
+
+/**
+ * U+2018 / U+2019 → ASCII apostrophe (') before other checks and repairs.
+ * @param {string} s
+ * @returns {string}
+ */
+function replaceSmartSingleQuotesWithAscii(s) {
+  let out = '';
+  for (let i = 0; i < s.length; ) {
+    const cp = s.codePointAt(i);
+    const w = cp > 0xffff ? 2 : 1;
+    if (cp === 0x2018 || cp === 0x2019) out += "'";
+    else out += String.fromCodePoint(cp);
+    i += w;
+  }
+  return out;
+}
 
 /** Unicode Mathematical Alphanumeric Symbols: contiguous Latin letter clusters (26 UC + 26 lc each). */
 const LATIN_LETTER_52_BLOCK_STARTS = [
@@ -61,6 +77,7 @@ function mapDigit10(cp, base) {
  * @returns {string | null}
  */
 function typoReplacementCodePoint(cp) {
+  if (cp === 0x2018 || cp === 0x2019) return "'"; // redundant if {@link replaceSmartSingleQuotesWithAscii} ran first
   // Normalize common unicode dash variants to ASCII hyphen-minus.
   if (cp === 0x2010 || cp === 0x2011 || cp === 0x2012 || cp === 0x2013 || cp === 0x2014 || cp === 0x2015) {
     return '-';
@@ -82,11 +99,6 @@ function typoReplacementCodePoint(cp) {
   return null;
 }
 
-/**
- * Apply common typo / homoglyph repairs toward ASCII identifiers.
- * @param {string} s
- * @returns {string}
- */
 /**
  * After NFKD + mark stripping, map anything still outside printable ASCII (except the small
  * allowlist used for validation) to `_`, so {@link checkUnicode} with `clean: true` can succeed.
@@ -183,6 +195,8 @@ const DEFAULT_MAX_SAMPLE_VALUE_LEN = 200;
  * Validate `value` for printable ASCII (and optional max length). Used internally by {@link checkUnicode}
  * and {@link collectInvalidUnicodeValues}.
  *
+ * U+2018/U+2019 are always mapped to ASCII apostrophe (') first.
+ *
  * When `clean` is true: trim surrounding whitespace, replace common Unicode typos/homoglyphs,
  * map any remaining non-ASCII (outside the small punctuation allowlist) to `_` (NBSP → space),
  * trim again (so replacement characters mapped to space do not leave stray leading/trailing spaces),
@@ -197,7 +211,7 @@ function runUnicodeCheck(value, options = {}) {
   if (value === null) return { ok: true, value: null };
   if (value === undefined) return { ok: true, value: undefined };
   const rawValue = String(value);
-  let s = rawValue;
+  let s = replaceSmartSingleQuotesWithAscii(rawValue);
   if (clean) {
     s = s.trim();
     s = applyReplaceCommonTypos(s);
