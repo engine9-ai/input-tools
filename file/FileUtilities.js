@@ -1030,7 +1030,34 @@ Worker.prototype.download.metadata = {
   }
 };
 Worker.prototype.head = async function (options) {
-  const limit = options.limit || 3;
+  const limit = parseInt(options.limit || 10, 10);
+  if (!options.filename) throw new Error('head: filename is required');
+  const format = await this.getFormat(options);
+  if (format === 'json' || format === 'json5') {
+    let postfix = options.sourcePostfix || options.filename.toLowerCase().split('.').pop();
+    const { stream: rawStream, encoding } = await this.stream({ filename: options.filename, limit: options.limit });
+    let stream = rawStream;
+    const transforms = [];
+    if (postfix === 'gz') {
+      const gunzip = zlib.createGunzip();
+      transforms.push(gunzip);
+      gunzip.setEncoding(encoding);
+      postfix = options.filename.toLowerCase().split('.');
+      postfix = postfix[postfix.length - 2];
+    } else if (encoding !== 'object') {
+      stream.setEncoding(encoding);
+    }
+    transforms.push(new LineReaderTransform());
+    for (const t of transforms) {
+      stream = stream.pipe(t);
+    }
+    const lines = [];
+    for await (const line of stream) {
+      lines.push(line);
+      if (lines.length >= limit) break;
+    }
+    return lines;
+  }
   const { stream } = await this.fileToObjectStream({ ...options, limit });
   const chunks = [];
   let counter = 0;
@@ -1043,7 +1070,8 @@ Worker.prototype.head = async function (options) {
 };
 Worker.prototype.head.metadata = {
   options: {
-    filename: { required: true }
+    filename: { required: true },
+    limit: { description: 'Max records (tabular) or lines (json/json5); default 10' }
   }
 };
 Worker.prototype.columns = async function (options) {

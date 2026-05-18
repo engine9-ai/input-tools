@@ -21,3 +21,12 @@ it('Should be able to analyze CSV files with and without header lines', async ()
   const f2 = await futil.columns({ filename: import.meta.dirname + '/sample/fileWithoutHead.csv' });
   assert.equal(f2.likelyHeaderLines, 0, 'Number of header lines should be 1');
 });
+it('Should return the first N lines from json and json5 files without parsing', async () => {
+  const futil = new FileUtilities({ accountId: 'test' });
+  const samplePath = `${import.meta.dirname}/sample/message/message.json5`;
+  const lines = await futil.head({ filename: samplePath, limit: 4 });
+  assert.equal(lines.length, 4);
+  assert.equal(typeof lines[0], 'string');
+  assert.equal(lines[0], '{');
+  assert.match(lines[1], /_id:\s*3611485/);
+});
