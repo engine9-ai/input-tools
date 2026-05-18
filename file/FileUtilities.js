@@ -991,7 +991,7 @@ Worker.prototype.stat = async function ({ filename }) {
   const output = {};
   if (filename.slice(-8) === '.parquet') {
     const pq = new ParquetWorker(this);
-    output.schema = (await pq.schema({ filename }))?.schema;
+    output.schema = await pq.schema({ filename });
     output.records = (await pq.meta({ filename }))?.records;
   }
   if (isRemote(filename)) {
