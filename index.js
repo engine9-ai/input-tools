@@ -46,7 +46,34 @@ handlebars.registerHelper('date', (d, f) => {
 handlebars.registerHelper('json', (d) => JSON.stringify(d));
 handlebars.registerHelper('uuid', () => uuidv7());
 handlebars.registerHelper('percent', (a, b) => `${((100 * a) / b).toFixed(2)}%`);
-handlebars.registerHelper('or', (a, b, c) => a || b || c);
+
+/** Handlebars appends an options object (`hash`, `data`, …) as the last argument to every helper. */
+function stripHandlebarsHelperOptions(args) {
+  if (args.length === 0) return args;
+  const last = args[args.length - 1];
+  if (last && typeof last === 'object' && 'hash' in last && 'data' in last) {
+    return args.slice(0, -1);
+  }
+  return args;
+}
+
+/** First truthy value, or the last argument (so `{{or overrides.end ''}}` can default to empty string). */
+handlebars.registerHelper('or', (...args) => {
+  const values = stripHandlebarsHelperOptions(args);
+  for (const v of values) {
+    if (v) return v;
+  }
+  return values.length > 0 ? values[values.length - 1] : '';
+});
+
+/** First falsy value, or the last argument when all are truthy. */
+handlebars.registerHelper('and', (...args) => {
+  const values = stripHandlebarsHelperOptions(args);
+  for (const v of values) {
+    if (!v) return v;
+  }
+  return values.length > 0 ? values[values.length - 1] : '';
+});
 async function list(_path) {
   const directory = await unzipper.Open.file(_path);
   return new Promise((resolve, reject) => {
