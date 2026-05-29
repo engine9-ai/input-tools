@@ -1,7 +1,7 @@
 /**
  * Printable ASCII validation for identifier-like strings (U+0020–U+007E).
  * U+2018/U+2019 map to ASCII apostrophe before validation. Internal typo repair maps other
- * mathematical / fullwidth characters to ASCII when `clean` is true.
+ * mathematical / fullwidth / Latin-accented characters to ASCII when `clean` is true.
  */
 
 const PRINTABLE_ASCII_MIN = 0x20;
@@ -72,6 +72,52 @@ function mapDigit10(cp, base) {
   return String(cp - base);
 }
 
+/** Latin letters that do not NFKD-decompose to a single ASCII letter. */
+const LATIN_TYPO_EXPLICIT = new Map([
+  [0x00c6, 'AE'], // Æ
+  [0x00e6, 'ae'], // æ
+  [0x00d0, 'D'], // Ð
+  [0x00f0, 'd'], // ð
+  [0x00d8, 'O'], // Ø
+  [0x00f8, 'o'], // ø
+  [0x00de, 'TH'], // Þ
+  [0x00fe, 'th'], // þ
+  [0x00df, 'ss'], // ß
+  [0x0152, 'OE'], // Œ
+  [0x0153, 'oe'], // œ
+  [0x0110, 'D'], // Đ
+  [0x0111, 'd'], // đ
+  [0x0141, 'L'], // Ł
+  [0x0142, 'l'], // ł
+  [0x0131, 'i'], // ı
+  [0x0138, 'k'] // ĸ
+]);
+
+/**
+ * @param {number} cp
+ * @returns {boolean}
+ */
+function isLatinAccentLetterCodePoint(cp) {
+  if (cp === 0x00d7 || cp === 0x00f7) return false; // ×, ÷
+  return (cp >= 0x00c0 && cp <= 0x00ff) || (cp >= 0x0100 && cp <= 0x017f);
+}
+
+/**
+ * Map Latin letters with diacritics (e.g. U+00F3 ó) and Latin Extended-A to ASCII.
+ * @param {number} cp
+ * @returns {string | null}
+ */
+function latinAccentTypoReplacement(cp) {
+  const explicit = LATIN_TYPO_EXPLICIT.get(cp);
+  if (explicit !== undefined) return explicit;
+  if (!isLatinAccentLetterCodePoint(cp)) return null;
+  const stripped = String.fromCodePoint(cp).normalize('NFKD').replace(/\p{M}/gu, '');
+  if (stripped.length !== 1) return null;
+  const base = stripped.codePointAt(0);
+  if ((base >= 0x41 && base <= 0x5a) || (base >= 0x61 && base <= 0x7a)) return stripped;
+  return null;
+}
+
 /**
  * @param {number} cp
  * @returns {string | null}
@@ -84,6 +130,8 @@ function typoReplacementCodePoint(cp) {
   }
   if (cp === 0x2212) return '-'; // MINUS SIGN
   if (cp === 0xfffd) return ' '; // REPLACEMENT CHARACTER (often shown as) -> ASCII space
+  const latin = latinAccentTypoReplacement(cp);
+  if (latin !== null) return latin;
   for (const base of DIGIT_BLOCK_STARTS) {
     const d = mapDigit10(cp, base);
     if (d !== null) return d;

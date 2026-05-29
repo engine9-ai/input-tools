@@ -51,6 +51,20 @@ describe('checkUnicode', () => {
     });
   });
 
+  it('clean:true maps Latin accented letters to ASCII (ó and similar)', () => {
+    assert.deepStrictEqual(checkUnicode('C\u00f3rdoba', { clean: true }), { ok: true, value: 'Cordoba' });
+    assert.deepStrictEqual(checkUnicode('jalape\u00f1o', { clean: true }), { ok: true, value: 'jalapeno' });
+    assert.deepStrictEqual(checkUnicode('M\u00fcller', { clean: true }), { ok: true, value: 'Muller' });
+    assert.deepStrictEqual(checkUnicode('fa\u00e7ade', { clean: true }), { ok: true, value: 'facade' });
+  });
+
+  it('clean:true maps Latin letters that do not NFKD to a single ASCII letter', () => {
+    assert.deepStrictEqual(checkUnicode('S\u00f8ren', { clean: true }), { ok: true, value: 'Soren' });
+    assert.deepStrictEqual(checkUnicode('E\u00e6r', { clean: true }), { ok: true, value: 'Eaer' });
+    assert.deepStrictEqual(checkUnicode('gro\u00df', { clean: true }), { ok: true, value: 'gross' });
+    assert.deepStrictEqual(checkUnicode('c\u0153ur', { clean: true }), { ok: true, value: 'coeur' });
+  });
+
   it('clean:true removes invisible characters', () => {
     assert.deepStrictEqual(checkUnicode('AB\u200BCD', { clean: true }), { ok: true, value: 'ABCD' });
   });
