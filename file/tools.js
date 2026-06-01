@@ -344,6 +344,10 @@ function normalizeListDepth(depth) {
   }
   return n;
 }
+
+/** csv-stringify defaults quote LF, comma, and double-quote but not CR; DuckDB read_csv rejects unquoted CR. */
+export const CSV_STRINGIFY_OPTIONS = { header: true, quoted_match: /\r/ };
+
 export { appendFileStatus };
 export { bool };
 export { downloadFile };
@@ -364,6 +368,7 @@ export { relativeDate };
 export { streamPacket };
 export { writeTempFile };
 export default {
+  CSV_STRINGIFY_OPTIONS,
   appendFileStatus,
   bool,
   downloadFile,

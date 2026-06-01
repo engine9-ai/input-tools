@@ -9,7 +9,7 @@ import { stringify, parse } from 'csv';
 import handlebars from 'handlebars';
 import ValidatingReadable from './ValidatingReadable.js';
 import FileUtilities from './file/FileUtilities.js';
-import { getTempFilename, getBatchTransform, getFile, streamPacket } from './file/tools.js';
+import { getTempFilename, getBatchTransform, getFile, streamPacket, CSV_STRINGIFY_OPTIONS } from './file/tools.js';
 const { Transform, Writable } = nodestream;
 const { pipeline } = promises;
 const debug = debug$0('@engine9/input-tools');
@@ -63,7 +63,7 @@ class ForEachEntry {
             }
           })
         )
-        .pipe(stringify({ header: true }))
+        .pipe(stringify(CSV_STRINGIFY_OPTIONS))
         .pipe(writeStream);
       return this.outputStreams[name].items;
     });

@@ -21,7 +21,8 @@ import {
   makeStrings,
   normalizeListDepth,
   streamPacket,
-  relativeDate
+  relativeDate,
+  CSV_STRINGIFY_OPTIONS
 } from './tools.js';
 const fsp = fs.promises;
 const { Readable, Transform, PassThrough, Writable } = nodestream;
@@ -430,7 +431,7 @@ Worker.prototype.getOutputStreams = async function (options) {
       }
     });
   } else {
-    stringifier = stringify({ header: true });
+    stringifier = stringify(CSV_STRINGIFY_OPTIONS);
   }
   let gzip = new PassThrough();
   if (options.gzip) {
