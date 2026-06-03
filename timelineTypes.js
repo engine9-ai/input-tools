@@ -22,6 +22,9 @@ const TRANSACTION_RECURRING = 14;
 const TRANSACTION_REFUND = 15;
 const SEGMENT_PERSON_ADD = 16;
 const SEGMENT_PERSON_REMOVE = 17;
+//This is useful to have a reference of someone just being in a segment
+//not necessarily their addition or removal
+const SEGMENT_PERSON_IN_SEGMENT = 18;
 // unknown generic conversion on a message
 const MESSAGE_CONVERSION = 20;
 // advocacy conversion on a message
@@ -90,6 +93,7 @@ const TIMELINE_ENTRY_TYPES = {
   TRANSACTION_REFUND,
   SEGMENT_PERSON_ADD,
   SEGMENT_PERSON_REMOVE,
+  SEGMENT_PERSON_IN_SEGMENT,
   SMS_SEND,
   SMS_DELIVERED,
   SMS_CLICK,
