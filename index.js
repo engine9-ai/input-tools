@@ -32,17 +32,81 @@ const {
   makeStrings,
   writeTempFile
 } = tools;
-function getFormattedDate(dateObject, format = 'MMM DD,YYYY') {
-  let d = dateObject;
-  if (d === 'now') d = new Date();
-  if (d) return dayjs(d).format(format);
-  return '';
+
+const RELATIVE_DATE_RE = /^([+-])([0-9]+)([YyMwdhms])([.a-z]*)$/;
+const UNIX_MS_MIN = 1e11;
+
+function looksLikeDateOrRelativeDateLiteral(value) {
+  if (typeof value !== 'string' || !value) return false;
+  if (value === 'now' || value === 'none') return true;
+  if (/^[0-9+-]/.test(value)) return true;
+  return RELATIVE_DATE_RE.test(value);
+}
+
+function unquotedDateHelperError(value) {
+  const display = typeof value === 'string' ? value : String(value);
+  return new Error(
+    `Handlebars {{date}} argument ${display} must be quoted (e.g. {{date '${display}'}}). Unquoted date and relative-date values are parsed as Handlebars expressions or context paths, not date literals.`
+  );
+}
+
+function assertDateHelperArgQuoted(param) {
+  if (param.type === 'StringLiteral') return;
+  if (param.type === 'NumberLiteral') {
+    throw unquotedDateHelperError(param.original ?? param.value);
+  }
+  if (param.type === 'PathExpression' && param.parts.length === 1 && !param.data) {
+    const { original } = param;
+    if (looksLikeDateOrRelativeDateLiteral(original)) {
+      throw unquotedDateHelperError(original);
+    }
+  }
+}
+
+function walkHandlebarsNodes(nodes, visitor) {
+  if (!nodes) return;
+  for (const node of nodes) {
+    visitor(node);
+    if (node.type === 'BlockStatement') {
+      walkHandlebarsNodes(node.program?.body, visitor);
+      walkHandlebarsNodes(node.inverse?.body, visitor);
+    }
+  }
+}
+
+function validateDateHelperTemplate(ast) {
+  walkHandlebarsNodes(ast.body, (node) => {
+    if (node.type !== 'MustacheStatement') return;
+    const { path, params } = node;
+    if (path.type !== 'PathExpression' || path.parts.join('.') !== 'date' || params.length === 0) return;
+    assertDateHelperArgQuoted(params[0]);
+  });
+}
+
+function assertQuotedDateValue(dateObject) {
+  if (typeof dateObject === 'number' && Math.abs(dateObject) < UNIX_MS_MIN) {
+    throw unquotedDateHelperError(dateObject);
+  }
+}
+
+function getFormattedDate(dateObject, format = 'ISO8601') {
+  assertQuotedDateValue(dateObject);
+  const d = relativeDate(dateObject);
+  if (!d) return '';
+  if (!format || format === 'ISO8601') return d.toISOString();
+  return dayjs(d).format(format);
 }
 handlebars.registerHelper('date', (d, f) => {
   let format;
   if (typeof f === 'string') format = f;
   return getFormattedDate(d, format);
 });
+
+const handlebarsCompile = handlebars.compile.bind(handlebars);
+handlebars.compile = function compileWithDateValidation(template, options) {
+  validateDateHelperTemplate(handlebars.parse(template, options));
+  return handlebarsCompile(template, options);
+};
 handlebars.registerHelper('json', (d) => JSON.stringify(d));
 handlebars.registerHelper('uuid', () => uuidv7());
 handlebars.registerHelper('percent', (a, b) => `${((100 * a) / b).toFixed(2)}%`);
