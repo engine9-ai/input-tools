@@ -46,8 +46,8 @@ async function getTempFilename(options) {
       .toISOString()
       .slice(0, -6)
       .replace(/[^0-9]/g, '_')}`;
-    const newDir = await mkdirp(dir);
-    return `${newDir}/${target}`;
+    await mkdirp(dir);
+    return `${dir}/${target}`;
   }
   let { prefix } = options;
   let { postfix } = options;

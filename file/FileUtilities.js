@@ -142,32 +142,36 @@ Worker.prototype.detectEncoding = async function (options) {
   const bytes = 64 * 1024;
   const buff = Buffer.alloc(bytes);
   const fd = await fsp.open(options.filename);
-  await fd.read(buff, 0, bytes);
-  let finalBuff = buff;
-  if (options.filename.slice(-3) === '.gz') {
-    // This code deals with scenarios where the buffer coming in may not be exactly the gzip
-    // needed chunk size.
-    finalBuff = await new Promise((resolve, reject) => {
-      const bufferBuilder = [];
-      const decompressStream = zlib
-        .createGunzip()
-        .on('data', (chunk) => {
-          bufferBuilder.push(chunk);
-        })
-        .on('close', () => {
-          resolve(Buffer.concat(bufferBuilder));
-        })
-        .on('error', (err) => {
-          if (err.errno !== -5) {
-            // EOF: expected
-            reject(err);
-          }
-        });
-      decompressStream.write(buff);
-      decompressStream.end();
-    });
+  try {
+    await fd.read(buff, 0, bytes);
+    let finalBuff = buff;
+    if (options.filename.slice(-3) === '.gz') {
+      // This code deals with scenarios where the buffer coming in may not be exactly the gzip
+      // needed chunk size.
+      finalBuff = await new Promise((resolve, reject) => {
+        const bufferBuilder = [];
+        const decompressStream = zlib
+          .createGunzip()
+          .on('data', (chunk) => {
+            bufferBuilder.push(chunk);
+          })
+          .on('close', () => {
+            resolve(Buffer.concat(bufferBuilder));
+          })
+          .on('error', (err) => {
+            if (err.errno !== -5) {
+              // EOF: expected
+              reject(err);
+            }
+          });
+        decompressStream.write(buff);
+        decompressStream.end();
+      });
+    }
+    return languageEncoding(finalBuff);
+  } finally {
+    await fd.close();
   }
-  return languageEncoding(finalBuff);
 };
 Worker.prototype.detectEncoding.metadata = {
   options: {
