@@ -277,11 +277,11 @@ function getInputUUID(a, b) {
   // 3d0e5d99-6ba9-4fab-9bb2-c32304d3df8e
   return uuidv5(`${pluginId}:${rid}`, '3d0e5d99-6ba9-4fab-9bb2-c32304d3df8e');
 }
-const timestampMatch = /^\d{13}$/;
 function dateFromString(s) {
   if (typeof s === 'number') return new Date(s);
-  if (typeof s === 'string') {
-    if (s.match(timestampMatch)) return new Date(parseInt(s));
+  if (typeof s === 'string' && /^\d+$/.test(s)) {
+    const n = Number(s);
+    if (n >= UNIX_MS_MIN) return new Date(n);
   }
   return new Date(s);
 }
@@ -363,11 +363,16 @@ function getTimelineEntryUUID(inputObject, { defaults = {} } = {}) {
   o.entry_type_id = getEntryTypeId(o);
   const missing = requiredTimelineEntryFields.filter((d) => o[d] === undefined); // 0 could be an entry type value
   if (missing.length > 0) throw new Error(`Missing required fields to append an entry_id:${missing.join(',')}`);
-  const ts = new Date(o.ts);
+  const ts = dateFromString(o.ts);
   // isNaN behaves differently than Number.isNaN -- we're actually going for the
   // attempted conversion here
   if (isNaN(ts)) throw new Error(`getTimelineEntryUUID got an invalid date:${o.ts || '<blank>'}`);
-  const idString = `${ts.toISOString()}-${o.person_id}-${o.entry_type_id}-${o.source_code_id || 0}`;
+  // Per-row input_id / message_id disambiguates entries that share ts/person/entry_type/source_code
+  // (e.g. email opens on different messages). Only use values from inputObject, not defaults.
+  const rowInputId = inputObject.message_id ?? inputObject.input_id;
+  const inputSuffix =
+    rowInputId !== undefined && rowInputId !== null && rowInputId !== '' ? `-${rowInputId}` : '';
+  const idString = `${ts.toISOString()}-${o.person_id}-${o.entry_type_id}-${o.source_code_id || 0}${inputSuffix}`;
   if (!uuidIsValid(o.plugin_id)) {
     throw new Error(`Invalid plugin_id:'${o.plugin_id}', type ${typeof o.plugin_id} -- should be a uuid`);
   }
