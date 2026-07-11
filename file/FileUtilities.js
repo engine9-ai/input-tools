@@ -1132,7 +1132,12 @@ Worker.prototype.getUniqueSet = async function (options) {
     uniqueFunction = (o) => JSON.stringify(o);
   }
   const uniqueSet = new Set();
-  for (const filename of existingFiles) {
+  const total = existingFiles.length;
+  for (let index = 0; index < total; index++) {
+    const filename = existingFiles[index];
+    if (typeof options.onFileRead === 'function') {
+      options.onFileRead({ filename, index, total });
+    }
     const { stream: existsStream } = await this.fileToObjectStream({ filename });
     await pipeline(
       existsStream,
