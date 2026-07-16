@@ -58,6 +58,24 @@ function getServicePrefix(p) {
   if (p.startsWith('gdrive://')) return 'gdrive';
   return null;
 }
+/** Node readable.setEncoding() only accepts a small set of names; map detector output. */
+function nodeReadableEncoding(encoding) {
+  if (!encoding || encoding === 'object') return encoding;
+  const normalized = String(encoding).trim().toLowerCase().replace(/[_\s]/g, '-');
+  if (normalized === 'utf-8' || normalized === 'utf8') return 'utf8';
+  if (normalized === 'utf-16le') return 'utf16le';
+  if (normalized === 'latin1' || normalized === 'iso-8859-1' || normalized === 'iso8859-1') return 'latin1';
+  if (normalized === 'ascii' || normalized === 'base64' || normalized === 'hex') return normalized;
+  if (normalized === 'cp1252' || normalized === 'windows-1252') return 'latin1';
+  return 'utf8';
+}
+function innerFilePostfix(filename, postfix) {
+  if (postfix === 'gz') {
+    const parts = filename.toLowerCase().split('.');
+    return parts[parts.length - 2];
+  }
+  return postfix;
+}
 class LineReaderTransform extends Transform {
   constructor(options = {}) {
     super({ ...options, readableObjectMode: true });
@@ -253,14 +271,21 @@ Worker.prototype.fileToObjectStream = async function (options) {
   const streamInfo = await this.stream({
     filename,
     columns,
-    limit
+    limit,
+    encoding_override: options.encoding_override || options.encoding
   });
-  const { encoding } = streamInfo;
+  let { encoding } = streamInfo;
   let { stream } = streamInfo;
   if (!stream) throw new Error(`No stream found in fileToObjectStream from filename ${filename}`);
   if (encoding === 'object') {
     // already an object
     return { stream };
+  }
+  const format = formatOverride || innerFilePostfix(filename, postfix);
+  if (format === 'jsonl' || format === 'json' || format === 'json5') {
+    encoding = options.encoding_override || options.encoding || 'utf8';
+  } else {
+    encoding = nodeReadableEncoding(encoding);
   }
   let count = 0;
   let transforms = [];
@@ -269,13 +294,10 @@ Worker.prototype.fileToObjectStream = async function (options) {
     transforms.push(gunzip);
     gunzip.setEncoding(encoding);
     // encoding = null;// Default encoding
-    postfix = filename.toLowerCase().split('.');
-    postfix = postfix[postfix.length - 2];
     debug(`Using gunzip parser because postfix is .gz, encoding=${encoding}`);
   } else {
     stream.setEncoding(encoding);
   }
-  let format = formatOverride || postfix;
   debug(`Reading file ${filename} with encoding: ${encoding} and format ${format}`);
   if (format === 'csv') {
     const csvTransforms = this.csvToObjectTransforms({ ...options });
@@ -574,7 +596,13 @@ Worker.prototype.stream = async function (options) {
         throw e;
       }
       stream = fs.createReadStream(filename);
-      encoding = (await this.detectEncoding({ filename })).encoding;
+      const encodingOverride = options.encoding_override || options.encoding;
+      if (encodingOverride) {
+        encoding = encodingOverride;
+      } else {
+        encoding = (await this.detectEncoding({ filename })).encoding;
+        encoding = nodeReadableEncoding(encoding);
+      }
     }
     return { stream, encoding };
   } else if (packet) {
@@ -1040,17 +1068,26 @@ Worker.prototype.head = async function (options) {
   const format = await this.getFormat(options);
   if (format === 'json' || format === 'json5') {
     let postfix = options.sourcePostfix || options.filename.toLowerCase().split('.').pop();
-    const { stream: rawStream, encoding } = await this.stream({ filename: options.filename, limit: options.limit });
+    const { stream: rawStream, encoding } = await this.stream({
+      filename: options.filename,
+      limit: options.limit,
+      encoding_override: options.encoding_override || options.encoding
+    });
     let stream = rawStream;
     const transforms = [];
+    const innerPostfix = innerFilePostfix(options.filename, postfix);
+    let textEncoding = encoding;
+    if (innerPostfix === 'jsonl' || innerPostfix === 'json' || innerPostfix === 'json5') {
+      textEncoding = options.encoding_override || options.encoding || 'utf8';
+    } else if (encoding !== 'object') {
+      textEncoding = nodeReadableEncoding(encoding);
+    }
     if (postfix === 'gz') {
       const gunzip = zlib.createGunzip();
       transforms.push(gunzip);
-      gunzip.setEncoding(encoding);
-      postfix = options.filename.toLowerCase().split('.');
-      postfix = postfix[postfix.length - 2];
-    } else if (encoding !== 'object') {
-      stream.setEncoding(encoding);
+      if (textEncoding !== 'object') gunzip.setEncoding(textEncoding);
+    } else if (textEncoding !== 'object') {
+      stream.setEncoding(textEncoding);
     }
     transforms.push(new LineReaderTransform());
     for (const t of transforms) {
