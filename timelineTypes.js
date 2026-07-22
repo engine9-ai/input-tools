@@ -8,6 +8,8 @@ const SIGNUP_INITIAL = 4;
 // Known subsequent signup
 const SIGNUP_SUBSEQUENT = 5;
 const UNSUBSCRIBE = 6;
+//Append of data, used heavily for source codes
+const DATA_APPEND = 7;
 // Generic monetary transaction
 const TRANSACTION = 10;
 // known one-time transaction
@@ -85,6 +87,7 @@ const TIMELINE_ENTRY_TYPES = {
   SIGNUP_INITIAL,
   SIGNUP_SUBSEQUENT,
   UNSUBSCRIBE,
+  DATA_APPEND,
   TRANSACTION,
   TRANSACTION_INITIAL,
   TRANSACTION_SUBSEQUENT,
