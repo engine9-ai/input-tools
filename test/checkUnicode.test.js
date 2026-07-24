@@ -1,8 +1,16 @@
 import assert from 'node:assert';
 import nodetest from 'node:test';
-import { checkUnicode, collectInvalidUnicodeValues } from '../checkUnicode.js';
+import { checkUnicode, collectInvalidUnicodeValues, cleanUnicodeValues } from '../checkUnicode.js';
 
 const { describe, it } = nodetest;
+
+/** @param {unknown} input @param {string} expected @param {object} [opts] */
+function assertCleansTo(input, expected, opts = { clean: true }) {
+  const r = checkUnicode(input, opts);
+  assert.strictEqual(r.ok, true, `expected ok for ${JSON.stringify(input)}`);
+  assert.strictEqual(r.value, expected);
+  if (r.violation) assert.strictEqual(r.cleaned, true);
+}
 
 describe('checkUnicode', () => {
   it('accepts null, undefined, empty, printable ASCII', () => {
@@ -38,57 +46,48 @@ describe('checkUnicode', () => {
     const boldThree = '\u{1D7EF}'; // MATHEMATICAL SANS-SERIF BOLD DIGIT THREE
     assert.strictEqual(checkUnicode(`PRE_${boldK}_${boldThree}`).ok, false);
     assert.strictEqual(checkUnicode(`X${boldK}Y`).ok, false);
-    assert.deepStrictEqual(checkUnicode(`PRE_${boldK}_${boldThree}`, { clean: true }), {
-      ok: true,
-      value: 'PRE_K_3'
-    });
+    assertCleansTo(`PRE_${boldK}_${boldThree}`, 'PRE_K_3');
   });
 
   it('clean:true strips combining marks (NFKD + Mn)', () => {
-    assert.deepStrictEqual(checkUnicode('caf\u00e9_GOOD', { clean: true }), {
-      ok: true,
-      value: 'cafe_GOOD'
-    });
+    assertCleansTo('caf\u00e9_GOOD', 'cafe_GOOD');
   });
 
   it('clean:true maps Latin accented letters to ASCII (ó and similar)', () => {
-    assert.deepStrictEqual(checkUnicode('C\u00f3rdoba', { clean: true }), { ok: true, value: 'Cordoba' });
-    assert.deepStrictEqual(checkUnicode('jalape\u00f1o', { clean: true }), { ok: true, value: 'jalapeno' });
-    assert.deepStrictEqual(checkUnicode('M\u00fcller', { clean: true }), { ok: true, value: 'Muller' });
-    assert.deepStrictEqual(checkUnicode('fa\u00e7ade', { clean: true }), { ok: true, value: 'facade' });
+    assertCleansTo('C\u00f3rdoba', 'Cordoba');
+    assertCleansTo('jalape\u00f1o', 'jalapeno');
+    assertCleansTo('M\u00fcller', 'Muller');
+    assertCleansTo('fa\u00e7ade', 'facade');
   });
 
   it('clean:true maps Latin letters that do not NFKD to a single ASCII letter', () => {
-    assert.deepStrictEqual(checkUnicode('S\u00f8ren', { clean: true }), { ok: true, value: 'Soren' });
-    assert.deepStrictEqual(checkUnicode('E\u00e6r', { clean: true }), { ok: true, value: 'Eaer' });
-    assert.deepStrictEqual(checkUnicode('gro\u00df', { clean: true }), { ok: true, value: 'gross' });
-    assert.deepStrictEqual(checkUnicode('c\u0153ur', { clean: true }), { ok: true, value: 'coeur' });
+    assertCleansTo('S\u00f8ren', 'Soren');
+    assertCleansTo('E\u00e6r', 'Eaer');
+    assertCleansTo('gro\u00df', 'gross');
+    assertCleansTo('c\u0153ur', 'coeur');
   });
 
   it('clean:true removes invisible characters', () => {
-    assert.deepStrictEqual(checkUnicode('AB\u200BCD', { clean: true }), { ok: true, value: 'ABCD' });
+    assertCleansTo('AB\u200BCD', 'ABCD');
   });
 
   it('clean:true maps fullwidth Latin to ASCII', () => {
-    assert.deepStrictEqual(checkUnicode(`X\uFF2BY`, { clean: true }), { ok: true, value: 'XKY' });
+    assertCleansTo(`X\uFF2BY`, 'XKY');
   });
 
   it('clean:true maps unicode dashes to ASCII hyphen', () => {
-    assert.deepStrictEqual(checkUnicode('A\u2013B', { clean: true }), { ok: true, value: 'A-B' });
-    assert.deepStrictEqual(checkUnicode('A\u2014B', { clean: true }), { ok: true, value: 'A-B' });
+    assertCleansTo('A\u2013B', 'A-B');
+    assertCleansTo('A\u2014B', 'A-B');
   });
 
   it('clean:true maps replacement character U+FFFD to ASCII space', () => {
-    assert.deepStrictEqual(checkUnicode('A\uFFFDB', { clean: true }), { ok: true, value: 'A B' });
-    assert.deepStrictEqual(checkUnicode('foo\uFFFDbar', { clean: true }), { ok: true, value: 'foo bar' });
-    assert.deepStrictEqual(checkUnicode('\uFFFDtrim', { clean: true }), { ok: true, value: 'trim' });
+    assertCleansTo('A\uFFFDB', 'A B');
+    assertCleansTo('foo\uFFFDbar', 'foo bar');
+    assertCleansTo('\uFFFDtrim', 'trim');
   });
 
   it('clean:true trims surrounding whitespace and tabs', () => {
-    assert.deepStrictEqual(checkUnicode('\t  ABC_123 \t', { clean: true }), {
-      ok: true,
-      value: 'ABC_123'
-    });
+    assertCleansTo('\t  ABC_123 \t', 'ABC_123');
   });
 
   it('rejects maxLength when clean is false', () => {
@@ -97,11 +96,42 @@ describe('checkUnicode', () => {
     assert.strictEqual(r.violation.reason, 'max_length_exceeded');
   });
 
-  it('clean:true truncates to maxLength after typo repair', () => {
+  it('clean:true truncates to maxLength after typo repair and reports violation', () => {
     assert.deepStrictEqual(checkUnicode('abcdefghij', { clean: true, maxLength: 4 }), {
       ok: true,
-      value: 'abcd'
+      value: 'abcd',
+      cleaned: true,
+      violation: { reason: 'max_length_exceeded', length: 10, maxLength: 4 }
     });
+  });
+
+  it('clean:true reports unicode violation when repairing look-alikes', () => {
+    const boldK = '\u{1D40A}';
+    const r = checkUnicode(`PRE_${boldK}`, { clean: true, maxLength: 180 });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.value, 'PRE_K');
+    assert.strictEqual(r.cleaned, true);
+    assert.strictEqual(r.violation.reason, 'mathematical_alphanumeric_symbol');
+  });
+
+  it('cleanUnicodeValues mutates rows and samples length/unicode cleanups', () => {
+    const long = `${'a'.repeat(200)} https://example.com/x`;
+    const boldK = '\u{1D40A}';
+    const batch = [
+      { source_code: 'ok' },
+      { source_code: long },
+      { source_code: long },
+      { source_code: `BAD_${boldK}` }
+    ];
+    const { count, samples, failures } = cleanUnicodeValues(batch, { maxLength: 180, maxSamples: 5 });
+    assert.strictEqual(failures.length, 0);
+    assert.strictEqual(count, 3);
+    assert.strictEqual(batch[1].source_code.length, 180);
+    assert.strictEqual(batch[3].source_code, 'BAD_K');
+    assert.strictEqual(samples.length, 2);
+    assert.strictEqual(samples[0].violation.reason, 'max_length_exceeded');
+    assert.strictEqual(samples[1].violation.reason, 'mathematical_alphanumeric_symbol');
+    assert.strictEqual(samples[0].cleaned.length, 180);
   });
 
   it('collectInvalidUnicodeValues counts rows and dedupes samples by value', () => {
@@ -122,18 +152,18 @@ describe('checkUnicode', () => {
   });
 
   it('clean:true maps U+1D7FB to ASCII digit (monospace five)', () => {
-    assert.deepStrictEqual(checkUnicode('\u{1D7FB}', { clean: true }), { ok: true, value: '5' });
+    assertCleansTo('\u{1D7FB}', '5');
   });
 
   it('clean:true maps Latin-1 / symbol punctuation outside ASCII to underscore', () => {
-    assert.deepStrictEqual(checkUnicode('a\u00b1b', { clean: true }), { ok: true, value: 'a_b' });
-    assert.deepStrictEqual(checkUnicode('90\u00b0', { clean: true }), { ok: true, value: '90_' });
-    assert.deepStrictEqual(checkUnicode('x\u00d7y', { clean: true }), { ok: true, value: 'x_y' });
-    assert.deepStrictEqual(checkUnicode('x\u00f7y', { clean: true }), { ok: true, value: 'x_y' });
-    assert.deepStrictEqual(checkUnicode('a\u{1F600}b', { clean: true }), { ok: true, value: 'a_b' });
+    assertCleansTo('a\u00b1b', 'a_b');
+    assertCleansTo('90\u00b0', '90_');
+    assertCleansTo('x\u00d7y', 'x_y');
+    assertCleansTo('x\u00f7y', 'x_y');
+    assertCleansTo('a\u{1F600}b', 'a_b');
   });
 
   it('clean:true maps NBSP to ordinary space', () => {
-    assert.deepStrictEqual(checkUnicode('a\u00a0b', { clean: true }), { ok: true, value: 'a b' });
+    assertCleansTo('a\u00a0b', 'a b');
   });
 });

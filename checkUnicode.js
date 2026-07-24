@@ -240,19 +240,46 @@ const DEFAULT_MAX_SAMPLE_VALUE_LEN = 200;
  */
 
 /**
+ * @param {string} s
+ * @param {number | undefined} maxLength
+ * @returns {Record<string, unknown> | null}
+ */
+function findPreCleanViolation(s, maxLength) {
+  const asciiViolation = findPrintableAsciiViolation(s);
+  if (asciiViolation) return asciiViolation;
+  if (maxLength != null && s.length > maxLength) {
+    return { reason: 'max_length_exceeded', length: s.length, maxLength };
+  }
+  return null;
+}
+
+/**
+ * @param {string} display
+ * @param {number} maxSampleValueLen
+ */
+function sampleDisplayValue(display, maxSampleValueLen) {
+  return display.length > maxSampleValueLen ? `${display.slice(0, maxSampleValueLen)}…` : display;
+}
+
+/**
  * Validate `value` for printable ASCII (and optional max length). Used internally by {@link checkUnicode}
  * and {@link collectInvalidUnicodeValues}.
  *
  * U+2018/U+2019 are always mapped to ASCII apostrophe (') first.
  *
- * When `clean` is true: trim surrounding whitespace, replace common Unicode typos/homoglyphs,
- * map any remaining non-ASCII (outside the small punctuation allowlist) to `_` (NBSP → space),
- * trim again (so replacement characters mapped to space do not leave stray leading/trailing spaces),
- * then truncate to `maxLength` if given, then validate.
+ * When `clean` is true: capture length/unicode violations first, then trim, replace common Unicode
+ * typos/homoglyphs, map remaining non-ASCII (outside the small punctuation allowlist) to `_`
+ * (NBSP → space), trim again, truncate to `maxLength` if given, then validate. On success after a
+ * prior length/unicode violation, returns `{ ok: true, value, cleaned: true, violation }`.
  *
  * @param {unknown} value
  * @param {CheckUnicodeOptions} [options]
- * @returns {{ ok: true, value: string | null | undefined } | { ok: false, violation: Record<string, unknown>, pendingValue: string, rawValue: string }}
+ * @returns {{
+ *   ok: true,
+ *   value: string | null | undefined,
+ *   cleaned?: boolean,
+ *   violation?: Record<string, unknown>
+ * } | { ok: false, violation: Record<string, unknown>, pendingValue: string, rawValue: string }}
  */
 function runUnicodeCheck(value, options = {}) {
   const { maxLength, clean = false } = options;
@@ -260,35 +287,21 @@ function runUnicodeCheck(value, options = {}) {
   if (value === undefined) return { ok: true, value: undefined };
   const rawValue = String(value);
   let s = replaceSmartSingleQuotesWithAscii(rawValue);
-  if (clean) {
-    s = s.trim();
-    s = applyReplaceCommonTypos(s);
-    s = s.trim();
-    if (maxLength != null && s.length > maxLength) {
-      s = s.slice(0, maxLength);
-    }
+  if (!clean) {
+    const violation = findPreCleanViolation(s, maxLength);
+    if (violation) return { ok: false, violation, pendingValue: s, rawValue };
+    return { ok: true, value: s };
   }
+  const preViolation = findPreCleanViolation(s, maxLength);
+  s = s.trim();
+  s = applyReplaceCommonTypos(s);
+  s = s.trim();
+  if (maxLength != null && s.length > maxLength) s = s.slice(0, maxLength);
   const asciiViolation = findPrintableAsciiViolation(s);
   if (asciiViolation) {
-    return {
-      ok: false,
-      violation: asciiViolation,
-      pendingValue: s,
-      rawValue
-    };
+    return { ok: false, violation: asciiViolation, pendingValue: s, rawValue };
   }
-  if (!clean && maxLength != null && s.length > maxLength) {
-    return {
-      ok: false,
-      violation: {
-        reason: 'max_length_exceeded',
-        length: s.length,
-        maxLength
-      },
-      pendingValue: s,
-      rawValue
-    };
-  }
+  if (preViolation) return { ok: true, value: s, cleaned: true, violation: preViolation };
   return { ok: true, value: s };
 }
 
@@ -298,8 +311,14 @@ function runUnicodeCheck(value, options = {}) {
  * @param {unknown} value
  * @param {CheckUnicodeOptions} [options]
  * @param {boolean} [options.clean=false] If true, applies common typo replacement then truncates to
- *   `maxLength` when specified, then validates.
- * @returns {{ ok: true, value: string | null | undefined } | { ok: false, violation: Record<string, unknown>, pendingValue: string, rawValue: string }}
+ *   `maxLength` when specified, then validates. When cleaning fixes a length/unicode violation,
+ *   the result includes `cleaned: true` and the original `violation`.
+ * @returns {{
+ *   ok: true,
+ *   value: string | null | undefined,
+ *   cleaned?: boolean,
+ *   violation?: Record<string, unknown>
+ * } | { ok: false, violation: Record<string, unknown>, pendingValue: string, rawValue: string }}
  */
 export function checkUnicode(value, options = {}) {
   return runUnicodeCheck(value, options);
@@ -343,10 +362,70 @@ export function collectInvalidUnicodeValues(rows, options = {}) {
     if (seen.has(display)) continue;
     seen.add(display);
     samples.push({
-      value: display.length > maxSampleValueLen ? `${display.slice(0, maxSampleValueLen)}…` : display,
+      value: sampleDisplayValue(display, maxSampleValueLen),
       violation: r.violation
     });
   }
 
   return { count, samples };
+}
+
+/**
+ * Clean `field` on each row via {@link checkUnicode} (`clean: true`). Mutates rows in place.
+ * Counts/samples values that were invalid due to length or unicode (same violation shape as
+ * {@link collectInvalidUnicodeValues}). Soft normalizations without a length/unicode violation
+ * are applied silently.
+ *
+ * @param {Array<Record<string, unknown>>} rows
+ * @param {{
+ *   field?: string,
+ *   maxSamples?: number,
+ *   maxSampleValueLen?: number,
+ *   maxLength?: number
+ * }} [options]
+ * @returns {{
+ *   count: number,
+ *   samples: Array<{ value: string, cleaned: string, violation: Record<string, unknown> }>,
+ *   failures: Array<{ value: string, violation: Record<string, unknown> }>
+ * }}
+ */
+export function cleanUnicodeValues(rows, options = {}) {
+  const {
+    field = 'source_code',
+    maxSamples = 5,
+    maxSampleValueLen = DEFAULT_MAX_SAMPLE_VALUE_LEN,
+    maxLength
+  } = options;
+  let count = 0;
+  const samples = [];
+  const failures = [];
+  /** @type {Set<string>} */
+  const seen = new Set();
+  if (!Array.isArray(rows)) return { count: 0, samples, failures };
+
+  for (const row of rows) {
+    const raw = row[field];
+    if (raw == null || raw === '') continue;
+    const r = runUnicodeCheck(raw, { maxLength, clean: true });
+    const display = String(raw);
+    if (!r.ok) {
+      failures.push({
+        value: sampleDisplayValue(display, maxSampleValueLen),
+        violation: r.violation
+      });
+      continue;
+    }
+    if (r.value !== raw) row[field] = r.value;
+    if (!r.violation) continue;
+    count += 1;
+    if (samples.length >= maxSamples || seen.has(display)) continue;
+    seen.add(display);
+    samples.push({
+      value: sampleDisplayValue(display, maxSampleValueLen),
+      cleaned: r.value,
+      violation: r.violation
+    });
+  }
+
+  return { count, samples, failures };
 }
