@@ -637,6 +637,7 @@ Worker.prototype.toArray.metadata = {
 };
 Worker.prototype.write = async function (opts) {
   const { filename, content } = opts;
+  const exclusive = bool(opts.exclusive, false);
   if (isRemote(filename)) {
     const worker = getServiceWorker(this, filename);
     const parts = filename.split('/');
@@ -646,12 +647,13 @@ Worker.prototype.write = async function (opts) {
     await worker.write({
       directory,
       file,
-      content
+      content,
+      exclusive
     });
   } else {
     const directory = path.dirname(filename);
     await fsp.mkdir(directory, { recursive: true });
-    await fsp.writeFile(filename, content);
+    await fsp.writeFile(filename, content, exclusive ? { flag: 'wx' } : undefined);
   }
   return { success: true, filename };
 };
@@ -660,7 +662,11 @@ Worker.prototype.write.metadata = {
     filename: {
       description: 'Location to write content to, can be local or s3:// or r2:// or gdrive://'
     },
-    content: {}
+    content: {},
+    exclusive: {
+      description:
+        'Create the file only if it does not exist (local O_EXCL / S3 If-None-Match). Throws if the file already exists.'
+    }
   }
 };
 Worker.prototype.put = async function (opts) {
@@ -916,6 +922,73 @@ Worker.prototype.moveAll.metadata = {
     targetDirectory: { required: true }
   }
 };
+/*
+  Rename every file in a directory by running String.replaceAll on the basename.
+  search is a string (literal) or a RegExp — same as String.prototype.replaceAll.
+  A string like /\\.complete/g is compiled to a RegExp so worker CLI can pass one.
+  replace is a string or function; omitted replace strips the match.
+*/
+function toReplaceAllSearch(search) {
+  if (search instanceof RegExp) {
+    return search.global ? search : new RegExp(search.source, `${search.flags}g`);
+  }
+  if (typeof search !== 'string' || search === '') {
+    throw new Error('search must be a string or RegExp');
+  }
+  const wrapped = search.match(/^\/((?:\\\/|[^/])+)\/([gimsuy]*)$/);
+  if (wrapped) {
+    const flags = wrapped[2].includes('g') ? wrapped[2] : `${wrapped[2]}g`;
+    return new RegExp(wrapped[1], flags);
+  }
+  return search;
+}
+function renameAllPath(entry) {
+  if (typeof entry === 'string') return entry;
+  return entry?.filename || entry?.name;
+}
+Worker.prototype.renameAll = async function ({ directory, search, replace = '' }) {
+  if (!directory) throw new Error('directory is required');
+  if (search === undefined || search === null || search === '') {
+    throw new Error('search is required');
+  }
+  const searchValue = toReplaceAllSearch(search);
+  const listed = await this.listAll({ directory });
+  const jobs = [];
+  for (const entry of listed) {
+    if (entry && typeof entry === 'object' && entry.type === 'directory') continue;
+    const filename = renameAllPath(entry);
+    if (!filename) continue;
+    if (!isRemote(filename)) {
+      try {
+        const st = await fsp.stat(filename);
+        if (st.isDirectory()) continue;
+      } catch {
+        continue;
+      }
+    }
+    const slash = filename.lastIndexOf('/');
+    const prefix = slash >= 0 ? filename.slice(0, slash + 1) : '';
+    const base = slash >= 0 ? filename.slice(slash + 1) : filename;
+    const next = base.replaceAll(searchValue, replace);
+    if (!next || next === base) continue;
+    jobs.push({ filename, target: `${prefix}${next}` });
+  }
+  const pLimit = await import('p-limit');
+  const limitedMethod = pLimit.default(10);
+  return Promise.all(jobs.map(({ filename, target }) => limitedMethod(async () => this.move({ filename, target }))));
+};
+Worker.prototype.renameAll.metadata = {
+  options: {
+    directory: { required: true },
+    search: {
+      required: true,
+      description: 'Literal string or /pattern/flags; applied with replaceAll to each file basename'
+    },
+    replace: {
+      description: 'Replacement string (or function when called programmatically); default empty string'
+    }
+  }
+};
 Worker.prototype.empty = async function ({ directory }) {
   if (!directory) throw new Error('directory is required');
   if (isRemote(directory)) {
@@ -954,7 +1027,7 @@ Worker.prototype.remove = async function ({ filename }) {
     const worker = getServiceWorker(this, filename);
     await worker.remove({ filename });
   } else {
-    fsp.unlink(filename);
+    await fsp.unlink(filename);
   }
   return { removed: filename };
 };
@@ -970,7 +1043,19 @@ Worker.prototype.move = async function ({ filename, target, remove = true }) {
   const sourcePrefix = getServicePrefix(filename);
   if (targetPrefix) {
     if (sourcePrefix && sourcePrefix !== targetPrefix) {
-      throw new Error('Cowardly not copying between services');
+      debug('copying across services %s -> %s', filename, target);
+      const { filename: localPath } = await this.download({ filename });
+      try {
+        await this.put({ filename: localPath, target });
+        if (remove) await this.remove({ filename });
+        return { filename: target };
+      } finally {
+        try {
+          await fsp.unlink(localPath);
+        } catch (e) {
+          debug('temp download cleanup failed path=%s err=%s', localPath, e.message);
+        }
+      }
     }
     const worker = getServiceWorker(this, target);
     if (sourcePrefix) {
@@ -1047,6 +1132,31 @@ Worker.prototype.stat = async function ({ filename }) {
 Worker.prototype.stat.metadata = {
   options: {
     filename: {}
+  }
+};
+Worker.prototype.getDirectoryName = async function ({ directory }) {
+  if (!directory) throw new Error('directory is required');
+  const normalized = String(directory).replace(/[/\\]+$/, '');
+  if (normalized.startsWith('gdrive://')) {
+    try {
+      const worker = getServiceWorker(this, normalized);
+      const folder = await worker.getFolder({ directory: normalized });
+      if (folder?.name) return folder.name;
+    } catch (e) {
+      debug(`getDirectoryName: could not resolve gdrive folder name for ${normalized}: ${e.message}`);
+    }
+  }
+  const parts = normalized.split('/').filter(Boolean);
+  const last = parts.slice(-1)[0] || normalized;
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+};
+Worker.prototype.getDirectoryName.metadata = {
+  options: {
+    directory: { required: true, description: 'Directory path or gdrive://{folderId}' }
   }
 };
 Worker.prototype.download = async function ({ filename }) {

@@ -526,6 +526,21 @@ Worker.prototype.stat.metadata = {
     }
 };
 
+Worker.prototype.getFolder = async function ({ directory }) {
+    const folderId = getFolderId(directory);
+    const drive = await this.getClient();
+    const resp = await drive.files.get({
+        fileId: folderId,
+        fields: 'id, name, mimeType, modifiedTime, createdTime'
+    });
+    return resp.data;
+};
+Worker.prototype.getFolder.metadata = {
+    options: {
+        directory: { description: 'Google Drive folder id or gdrive://{folderId}' }
+    }
+};
+
 Worker.prototype.getMetadata = async function ({ filename }) {
     if (!filename) throw new Error('filename is required');
     const { folderId, file } = getParts(filename);

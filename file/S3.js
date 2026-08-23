@@ -163,7 +163,7 @@ Worker.prototype.put.metadata = {
   }
 };
 Worker.prototype.write = async function (options) {
-  const { directory, file, content } = options;
+  const { directory, file, content, exclusive } = options;
   if (!directory?.indexOf('s3://') === 0) throw new Error('directory must start with s3://');
   const parts = directory.split('/');
   const Bucket = parts[2];
@@ -176,7 +176,8 @@ Worker.prototype.write = async function (options) {
     Bucket,
     Key,
     Body,
-    ContentType
+    ContentType,
+    ...(exclusive ? { IfNoneMatch: '*' } : {})
   });
   return s3Client.send(command);
 };
