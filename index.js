@@ -21,11 +21,15 @@ const {
   getFile,
   getManifest,
   getPacketFiles,
+  getServicePrefix,
   getStringArray,
   downloadFile,
   getTempFilename,
   getTempDir,
+  isRemotePath,
   isValidDate,
+  joinRemotePath,
+  normalizeRemoteUri,
   parseJSON5,
   relativeDate,
   streamPacket,
@@ -476,8 +480,12 @@ export { getInputUUID };
 export { getVersionedUUID };
 export { getUUIDTimestamp };
 export { handlebars };
+export { getServicePrefix };
+export { isRemotePath };
 export { isValidDate };
+export { joinRemotePath };
 export { makeStrings };
+export { normalizeRemoteUri };
 export { ObjectError };
 export { parseJSON5 };
 export { relativeDate };
@@ -507,6 +515,7 @@ export default {
   getEntryTypeId,
   getFile,
   getManifest,
+  getServicePrefix,
   getStringArray,
   getTempDir,
   getTempFilename,
@@ -517,8 +526,11 @@ export default {
   getVersionedUUID,
   getUUIDTimestamp,
   handlebars,
+  isRemotePath,
   isValidDate,
+  joinRemotePath,
   makeStrings,
+  normalizeRemoteUri,
   ObjectError,
   parseJSON5,
   relativeDate,

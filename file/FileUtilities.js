@@ -11,6 +11,7 @@ import languageEncoding from 'detect-file-encoding-and-language';
 import R2Worker from './R2.js';
 import S3Worker from './S3.js';
 import GoogleDriveWorker from './GoogleDrive.js';
+import GCSWorker from './GCS.js';
 import ParquetWorker from './Parquet.js';
 import {
   bool,
@@ -18,6 +19,8 @@ import {
   getStringArray,
   getTempDir,
   getFilePostfix,
+  getServicePrefix,
+  isRemotePath,
   makeStrings,
   normalizeListDepth,
   streamPacket,
@@ -36,26 +39,17 @@ function Worker({ accountId }) {
 }
 /*
 Return the remote-service worker for a given path, or null if it's a local path.
-Keeps the s3:///r2:///gdrive:// branching consistent across FileUtilities.
+Keeps the s3:///r2:///gdrive:///gs:// branching consistent across FileUtilities.
 */
 function isRemote(p) {
-  return (
-    typeof p === 'string' &&
-    (p.startsWith('s3://') || p.startsWith('r2://') || p.startsWith('gdrive://'))
-  );
+  return isRemotePath(p);
 }
 function getServiceWorker(owner, p) {
   if (typeof p !== 'string') return null;
   if (p.startsWith('s3://')) return new S3Worker(owner);
   if (p.startsWith('r2://')) return new R2Worker(owner);
   if (p.startsWith('gdrive://')) return new GoogleDriveWorker(owner);
-  return null;
-}
-function getServicePrefix(p) {
-  if (typeof p !== 'string') return null;
-  if (p.startsWith('s3://')) return 's3';
-  if (p.startsWith('r2://')) return 'r2';
-  if (p.startsWith('gdrive://')) return 'gdrive';
+  if (p.startsWith('gs://') || p.startsWith('gcs://')) return new GCSWorker(owner);
   return null;
 }
 /** Node readable.setEncoding() only accepts a small set of names; map detector output. */
@@ -201,7 +195,7 @@ Worker.prototype.xlsxToObjectStream = async function (options) {
   if (isRemote(filename)) {
     // We need to copy locally first so xlstream can read from disk
     const worker = getServiceWorker(this, filename);
-    if (filename.startsWith('gdrive://')) {
+    if (filename.startsWith('gdrive://') || filename.startsWith('gs://') || filename.startsWith('gcs://')) {
       const { filename: local } = await worker.download({ filename });
       filename = local;
     } else {
@@ -516,14 +510,29 @@ Worker.prototype.transform = async function (options) {
     }
     stream = stream.pipe(f);
   });
-  const { targetFormat } = options;
+  const { targetFormat, targetFilename: remoteTarget } = options;
   if (
     !targetFormat &&
     (filename.toLowerCase().slice(-4) === '.csv' || filename.toLowerCase().slice(-7) === '.csv.gz')
   ) {
     options.targetFormat = 'csv';
   }
-  return worker.objectStreamToFile({ ...options, stream });
+  // Write locally first; if targetFilename is a remote URI, put afterward.
+  const remoteDest = remoteTarget && isRemote(remoteTarget) ? remoteTarget : null;
+  if (remoteDest) {
+    delete options.targetFilename;
+  }
+  const result = await worker.objectStreamToFile({ ...options, stream });
+  if (remoteDest) {
+    await worker.put({ filename: result.filename, target: remoteDest });
+    try {
+      await fsp.unlink(result.filename);
+    } catch (e) {
+      debug('temp transform cleanup failed path=%s err=%s', result.filename, e.message);
+    }
+    return { ...result, filename: remoteDest };
+  }
+  return result;
 };
 Worker.prototype.transform.metadata = {
   options: {
@@ -534,7 +543,7 @@ Worker.prototype.transform.metadata = {
       description:
         "Comma delimited source field name, or Handlebars [[ ]] merge fields (e.g. 'my_field,x,y,z', '[[field1]]-[[field2]]', etc)"
     },
-    targetFilename: { description: 'Custom name of the output file (default auto-generated)' },
+    targetFilename: { description: 'Custom name of the output file (default auto-generated); may be a remote URI (s3://, gs://, …) — written locally then put' },
     targetFormat: { description: 'Output format -- csv supported, or none for txt (default)' },
     targetRowDelimiter: { description: 'Row delimiter (default \n)' },
     targetFieldDelimiter: { description: 'Field delimiter (default \t or ,)' }
@@ -660,7 +669,7 @@ Worker.prototype.write = async function (opts) {
 Worker.prototype.write.metadata = {
   options: {
     filename: {
-      description: 'Location to write content to, can be local or s3:// or r2:// or gdrive://'
+      description: 'Location to write content to, can be local or s3:// or r2:// or gdrive:// or gs://'
     },
     content: {},
     exclusive: {
@@ -676,18 +685,18 @@ Worker.prototype.put = async function (opts) {
   let directoryResolved;
   let fileResolved;
   if (target) {
-    if (!isRemote(target)) throw new Error('target must be s3://, r2://, or gdrive://');
+    if (!isRemote(target)) throw new Error('target must be s3://, r2://, gdrive://, or gs://');
     const parts = target.split('/');
     directoryResolved = parts.slice(0, -1).join('/');
     fileResolved = parts.slice(-1)[0] || path.basename(filename);
   } else {
     if (!directory) throw new Error('directory or target is required');
-    if (!isRemote(directory)) throw new Error('directory must be s3://, r2://, or gdrive://');
+    if (!isRemote(directory)) throw new Error('directory must be s3://, r2://, gdrive://, or gs://');
     directoryResolved = directory;
     fileResolved = file ?? path.basename(filename);
   }
   const worker = getServiceWorker(this, directoryResolved);
-  if (!worker) throw new Error('put destination must use s3://, r2://, or gdrive://');
+  if (!worker) throw new Error('put destination must use s3://, r2://, gdrive://, or gs://');
   return worker.put({
     filename,
     directory: directoryResolved,
@@ -698,9 +707,9 @@ Worker.prototype.put.metadata = {
   options: {
     filename: { description: 'Local file path to upload' },
     target: {
-      description: 'Full remote destination URI (s3://, r2://, or gdrive://…/objectName); alternative to directory+file'
+      description: 'Full remote destination URI (s3://, r2://, gdrive://, or gs://…/objectName); alternative to directory+file'
     },
-    directory: { description: 'Remote folder/prefix (s3://, r2://, or gdrive://…); use with file or rely on local basename' },
+    directory: { description: 'Remote folder/prefix (s3://, r2://, gdrive://, or gs://…); use with file or rely on local basename' },
     file: { description: 'Remote object/file name; defaults to the local file basename' }
   }
 };
@@ -900,7 +909,12 @@ Worker.prototype.listAll.metadata = {
 Worker.prototype.moveAll = async function (options) {
   const { directory, targetDirectory } = options;
   if (!directory) throw new Error('directory is required');
-  if (isRemote(directory)) {
+  if (!targetDirectory) throw new Error('targetDirectory is required');
+  const sourcePrefix = getServicePrefix(directory);
+  const targetPrefix = getServicePrefix(targetDirectory);
+  // Same-service remote: use the service worker's native moveAll.
+  // Cross-service (e.g. s3:// → gs://): list on source and copy/move via FileUtilities.
+  if (isRemote(directory) && sourcePrefix && targetPrefix && sourcePrefix === targetPrefix) {
     const worker = getServiceWorker(this, directory);
     return worker.moveAll(options);
   }
@@ -993,7 +1007,7 @@ Worker.prototype.empty = async function ({ directory }) {
   if (!directory) throw new Error('directory is required');
   if (isRemote(directory)) {
     // currently not emptying remote directories this way -- dangerous
-    throw new Error('Cannot empty an s3://, r2://, or gdrive:// directory');
+    throw new Error('Cannot empty an s3://, r2://, gdrive://, or gs:// directory');
   }
   const removed = [];
   for (const file of await fsp.readdir(directory)) {

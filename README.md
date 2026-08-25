@@ -136,7 +136,22 @@ Class for batch-processing packet contents with transforms, bindings, and option
 
 ### `FileUtilities`
 
-Worker-style class (`new FileUtilities({ accountId })`) for local and remote paths (`s3://`, `r2://`, `gdrive://`): read/write, CSV/JSON/JSON5/Parquet/XLSX streaming, glob, copy, etc. Used heavily by Engine9 `FileWorker`.
+Worker-style class (`new FileUtilities({ accountId })`) for local and remote paths (`s3://`, `r2://`, `gdrive://`, `gs://`): read/write, CSV/JSON/JSON5/Parquet/XLSX streaming, glob, copy, etc. Used heavily by Engine9 `FileWorker`.
+
+**Remote URI schemes**
+
+| Scheme | Backend | Auth |
+| ------ | ------- | ---- |
+| `s3://bucket/key` | AWS S3 | Default AWS credential chain |
+| `r2://bucket/key` | Cloudflare R2 | `CLOUDFLARE_R2_*` env vars |
+| `gdrive://{folderId}/{file}` | Google Drive | `GOOGLE_APPLICATION_CREDENTIALS` JSON key **with** `subject_to_impersonate` |
+| `gs://bucket/key` (alias `gcs://`) | Google Cloud Storage | Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS` or gcloud ADC). Does **not** require `subject_to_impersonate` — the same key file can serve Drive (with that field) and GCS (as the service account itself). |
+
+Cross-service `copy` / `move` (e.g. `s3://…` → `gs://…`) downloads to a temp file then uploads. Same-service copies use native APIs. `transform` can take a remote `targetFilename` (`gs://…`); it writes a local temp file then `put`s to the destination.
+
+### `isRemotePath` / `getServicePrefix` / `joinRemotePath` / `normalizeRemoteUri`
+
+Shared helpers for detecting remote URIs and joining path segments without collapsing `gs://` (Node `path.join` would turn it into `gs:/`).
 
 ### `getTempDir({ accountId })` / `getTempFilename(options)` / `writeTempFile({ content, postfix, ... })`
 

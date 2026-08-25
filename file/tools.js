@@ -345,6 +345,60 @@ function normalizeListDepth(depth) {
   return n;
 }
 
+const REMOTE_URI_PREFIX_RE = /^(s3|r2|gdrive|gs|gcs):\/\//i;
+
+/** True for s3://, r2://, gdrive://, gs://, or gcs:// paths. */
+function isRemotePath(p) {
+  return typeof p === 'string' && REMOTE_URI_PREFIX_RE.test(p);
+}
+
+/**
+ * Service prefix for remote URIs. Canonical GCS prefix is `gs` (gcs:// aliases to gs).
+ * @returns {'s3'|'r2'|'gdrive'|'gs'|null}
+ */
+function getServicePrefix(p) {
+  if (typeof p !== 'string') return null;
+  if (p.startsWith('s3://')) return 's3';
+  if (p.startsWith('r2://')) return 'r2';
+  if (p.startsWith('gdrive://')) return 'gdrive';
+  if (p.startsWith('gs://') || p.startsWith('gcs://')) return 'gs';
+  return null;
+}
+
+/** Repair path.join damage (`gs:/bucket`) and normalize gcs:// → gs://. */
+function normalizeRemoteUri(uri) {
+  if (typeof uri !== 'string') return uri;
+  return uri
+    .replace(/^(s3|r2|gdrive|gs|gcs):\/(?!\/)/i, '$1://')
+    .replace(/^gcs:\/\//i, 'gs://');
+}
+
+/**
+ * Like path.join but preserves s3:// / r2:// / gdrive:// / gs:// (Node collapses // after the scheme).
+ * gcs:// bases are normalized to gs://.
+ */
+function joinRemotePath(base, ...names) {
+  const b = normalizeRemoteUri(String(base).replace(/[/\\]+$/, ''));
+  if (REMOTE_URI_PREFIX_RE.test(b)) {
+    let out = b;
+    for (const name of names) {
+      const n = String(name)
+        .replace(/^[/\\]+/, '')
+        .replace(/[/\\]+$/, '');
+      if (!n) continue;
+      out = `${out}/${n}`;
+    }
+    return out;
+  }
+  let out = b;
+  for (const name of names) {
+    const n = String(name).replace(/^[/\\]+/, '');
+    if (!n) continue;
+    out = path.join(out, n);
+  }
+  return out;
+}
+
 /** csv-stringify defaults quote LF, comma, and double-quote but not CR; DuckDB read_csv rejects unquoted CR. */
 export const CSV_STRINGIFY_OPTIONS = { header: true, quoted_match: /\r/ };
 
@@ -359,10 +413,14 @@ export { getFile };
 export { getFilePostfix };
 export { getManifest };
 export { getPacketFiles };
+export { getServicePrefix };
 export { getStringArray };
+export { isRemotePath };
 export { isValidDate };
+export { joinRemotePath };
 export { makeStrings };
 export { normalizeListDepth };
+export { normalizeRemoteUri };
 export { parseJSON5 };
 export { relativeDate };
 export { streamPacket };
@@ -380,10 +438,14 @@ export default {
   getFilePostfix,
   getManifest,
   getPacketFiles,
+  getServicePrefix,
   getStringArray,
+  isRemotePath,
   isValidDate,
+  joinRemotePath,
   makeStrings,
   normalizeListDepth,
+  normalizeRemoteUri,
   parseJSON5,
   relativeDate,
   streamPacket,
