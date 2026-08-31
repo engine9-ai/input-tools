@@ -1,6 +1,6 @@
 # @engine9/input-tools
 
-Cross-environment utilities for reading, writing, and processing Engine9-style input packets (zip manifests, CSV/JSON streams, timeline IDs, and templating). Intended for CLIs, workers, and third-party integrations — not tied to server-only storage or optional analytics engines.
+Cross-environment utilities for reading, writing, and processing engine9-style input packets (zip manifests, CSV/JSON streams, timeline IDs, and templating). Intended for CLIs, workers, and third-party integrations — not tied to server-only storage or optional analytics engines.
 
 ```javascript
 import inputTools from '@engine9/input-tools';
@@ -10,13 +10,13 @@ import { relativeDate, handlebars, getTimelineEntryUUID } from '@engine9/input-t
 
 ## Scope
 
-This package stays **portable across environments**. It should not depend on server-only storage layout, optional analytics engines, or products that not every consumer installs. For example, **DuckDB** paths and related defaults live in the Engine9 **server** (or your app), not here.
+This package stays **portable across environments**. It should not depend on server-only storage layout, optional analytics engines, or products that not every consumer installs. For example, **DuckDB** paths and related defaults live in the engine9 **server** (or your app), not here.
 
 ---
 
 ## Handlebars
 
-The package exports a shared [`handlebars`](https://handlebarsjs.com/) instance with Engine9 helpers registered. `handlebars.compile` validates `{{date}}` templates at compile time: literal date arguments must be quoted (see below).
+The package exports a shared [`handlebars`](https://handlebarsjs.com/) instance with engine9 helpers registered. `handlebars.compile` validates `{{date}}` templates at compile time: literal date arguments must be quoted (see below).
 
 ### Helpers
 
@@ -82,7 +82,7 @@ Parse rolling windows, ISO strings, unix ms, or `now` / `none`.
 | Integer ≥ 1e11 | Unix ms timestamp |
 | ISO / parseable date string | Parsed `Date` |
 
-Also available as transform binding `tools.relativeDate` in Engine9 workers.
+Also available as transform binding `tools.relativeDate` in engine9 workers.
 
 ### `isValidDate(d)`
 
@@ -96,7 +96,7 @@ Returns an array of `Date` values between two bounds, with step size chosen from
 
 ## Input packets (zip)
 
-Engine9 packets are zip files with a root `manifest.json` and typed member files (`person/`, `timeline/`, etc.).
+engine9 packets are zip files with a root `manifest.json` and typed member files (`person/`, `timeline/`, etc.).
 
 ### `create(options)`
 
@@ -136,7 +136,7 @@ Class for batch-processing packet contents with transforms, bindings, and option
 
 ### `FileUtilities`
 
-Worker-style class (`new FileUtilities({ accountId })`) for local and remote paths (`s3://`, `r2://`, `gdrive://`, `gs://`): read/write, CSV/JSON/JSON5/Parquet/XLSX streaming, glob, copy, etc. Used heavily by Engine9 `FileWorker`.
+Worker-style class (`new FileUtilities({ accountId })`) for local and remote paths (`s3://`, `r2://`, `gdrive://`, `gs://`): read/write, CSV/JSON/JSON5/Parquet/XLSX streaming, glob, copy, etc. Used heavily by engine9 `FileWorker`.
 
 **Remote URI schemes**
 
@@ -239,5 +239,5 @@ The default export is an object containing all named exports above for `import i
 
 ## Related packages
 
-- **Engine9 server** — workers bind `tools.relativeDate`, `tools.handlebars`, and `FileUtilities` for imports/exports.
+- **engine9 server** — workers bind `tools.relativeDate`, `tools.handlebars`, and `FileUtilities` for imports/exports.
 - **Export definitions** — Handlebars merges in `server/utilities/exportDefinitionMerge.js`; use `{{date (or overrides.start "-30d")}}` in raw EQL conditions.
