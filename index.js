@@ -11,6 +11,7 @@ import tools from './file/tools.js';
 import ForEachEntry from './ForEachEntry.js';
 import { TIMELINE_ENTRY_TYPES } from './timelineTypes.js';
 import { checkUnicode, collectInvalidUnicodeValues, cleanUnicodeValues } from './checkUnicode.js';
+import { keyFromFields, mergeIntoQueue } from './mergeIntoQueue.js';
 const debug = debug$0('@engine9/input-tools');
 
 const {
@@ -484,6 +485,8 @@ export { getServicePrefix };
 export { isRemotePath };
 export { isValidDate };
 export { joinRemotePath };
+export { keyFromFields };
+export { mergeIntoQueue };
 export { makeStrings };
 export { normalizeRemoteUri };
 export { ObjectError };
@@ -529,6 +532,8 @@ export default {
   isRemotePath,
   isValidDate,
   joinRemotePath,
+  keyFromFields,
+  mergeIntoQueue,
   makeStrings,
   normalizeRemoteUri,
   ObjectError,
