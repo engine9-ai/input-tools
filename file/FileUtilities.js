@@ -27,6 +27,7 @@ import {
   relativeDate,
   CSV_STRINGIFY_OPTIONS
 } from './tools.js';
+import { writeUniqueRecords, withUniqueRecords } from '../writeUniqueRecords.js';
 const fsp = fs.promises;
 const { Readable, Transform, PassThrough, Writable } = nodestream;
 const { pipeline } = promises;
@@ -1423,5 +1424,12 @@ Worker.prototype.diff.metadata = {
       description: 'Sometimes you want the output to include source dupes, sometimes not, default false'
     }
   }
+};
+Worker.prototype.writeUniqueRecords = function (opts) {
+  return writeUniqueRecords(this, opts);
+};
+Worker.prototype.writeUniqueRecords.metadata = writeUniqueRecords.metadata;
+Worker.prototype.withUniqueRecords = function (opts, fn) {
+  return withUniqueRecords(this, opts, fn);
 };
 export default Worker;

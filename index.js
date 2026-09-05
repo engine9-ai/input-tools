@@ -12,6 +12,16 @@ import ForEachEntry from './ForEachEntry.js';
 import { TIMELINE_ENTRY_TYPES } from './timelineTypes.js';
 import { checkUnicode, collectInvalidUnicodeValues, cleanUnicodeValues } from './checkUnicode.js';
 import { keyFromFields, mergeIntoQueue } from './mergeIntoQueue.js';
+import {
+  contentFingerprint,
+  hashFingerprint,
+  FINGERPRINT_HASH,
+  isSeenRecordsFile,
+  writeUniqueRecords,
+  withUniqueRecords,
+  SEEN_RECORDS_FILENAME,
+  SEEN_RECORDS_LOCK_FILENAME
+} from './writeUniqueRecords.js';
 const debug = debug$0('@engine9/input-tools');
 
 const {
@@ -495,6 +505,14 @@ export { relativeDate };
 export { streamPacket };
 export { TIMELINE_ENTRY_TYPES };
 export { writeTempFile };
+export { writeUniqueRecords };
+export { withUniqueRecords };
+export { contentFingerprint };
+export { hashFingerprint };
+export { FINGERPRINT_HASH };
+export { isSeenRecordsFile };
+export { SEEN_RECORDS_FILENAME };
+export { SEEN_RECORDS_LOCK_FILENAME };
 export { uuidIsValid };
 export { uuidv4 };
 export { uuidv5 };
@@ -542,6 +560,14 @@ export default {
   streamPacket,
   TIMELINE_ENTRY_TYPES,
   writeTempFile,
+  writeUniqueRecords,
+  withUniqueRecords,
+  contentFingerprint,
+  hashFingerprint,
+  FINGERPRINT_HASH,
+  isSeenRecordsFile,
+  SEEN_RECORDS_FILENAME,
+  SEEN_RECORDS_LOCK_FILENAME,
   uuidIsValid,
   uuidv4,
   uuidv5,
