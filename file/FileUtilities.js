@@ -566,7 +566,7 @@ Worker.prototype.testTransform.metadata = {
 };
 /* Get a stream from an actual stream, or an array, or a file */
 Worker.prototype.stream = async function (options) {
-  const { stream: inputStream, packet, type, columns, limit, filename: filenameOpt } = options;
+  const { stream: inputStream, packet, type, columns, limit, filename: filenameOpt, start, end } = options;
   let filename = filenameOpt;
   if (inputStream) {
     if (Array.isArray(inputStream)) {
@@ -590,7 +590,7 @@ Worker.prototype.stream = async function (options) {
       encoding = 'object';
     } else if (isRemote(filename)) {
       const serviceWorker = getServiceWorker(this, filename);
-      stream = (await serviceWorker.stream({ filename, columns, limit })).stream;
+      stream = (await serviceWorker.stream({ filename, columns, limit, start, end })).stream;
       encoding = 'UTF-8';
     } else {
       // Check if the file exists, and fast fail if not
@@ -605,7 +605,10 @@ Worker.prototype.stream = async function (options) {
         );
         throw e;
       }
-      stream = fs.createReadStream(filename);
+      const streamOpts = {};
+      if (Number.isInteger(start) && start >= 0) streamOpts.start = start;
+      if (Number.isInteger(end) && end >= 0) streamOpts.end = end;
+      stream = fs.createReadStream(filename, streamOpts);
       const encodingOverride = options.encoding_override || options.encoding;
       if (encodingOverride) {
         encoding = encodingOverride;

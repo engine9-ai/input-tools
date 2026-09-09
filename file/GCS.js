@@ -58,12 +58,15 @@ Worker.prototype.getMetadata.metadata = {
   }
 };
 
-Worker.prototype.stream = async function ({ filename }) {
+Worker.prototype.stream = async function ({ filename, start, end }) {
   const { Bucket, Key } = getParts(filename);
   try {
     debug(`Streaming file gs://${Bucket}/${Key}`);
     const file = this.getFile(filename);
-    return { stream: file.createReadStream() };
+    const streamOpts = {};
+    if (Number.isInteger(start) && start >= 0) streamOpts.start = start;
+    if (Number.isInteger(end) && end >= 0) streamOpts.end = end;
+    return { stream: file.createReadStream(streamOpts) };
   } catch (e) {
     debug(`Could not stream filename:${filename}`);
     throw e;

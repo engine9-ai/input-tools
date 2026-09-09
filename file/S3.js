@@ -49,10 +49,20 @@ Worker.prototype.getMetadata.metadata = {
     filename: {}
   }
 };
-Worker.prototype.stream = async function ({ filename }) {
+function byteRangeHeader(start, end) {
+  const hasStart = Number.isInteger(start) && start >= 0;
+  const hasEnd = Number.isInteger(end) && end >= 0;
+  if (!hasStart && !hasEnd) return undefined;
+  const from = hasStart ? start : 0;
+  const to = hasEnd ? String(end) : '';
+  return `bytes=${from}-${to}`;
+}
+
+Worker.prototype.stream = async function ({ filename, start, end }) {
   const s3Client = this.getClient();
   const { Bucket, Key } = getParts(filename);
-  const command = new GetObjectCommand({ Bucket, Key });
+  const Range = byteRangeHeader(start, end);
+  const command = new GetObjectCommand(Range ? { Bucket, Key, Range } : { Bucket, Key });
   try {
     debug(`Streaming file s3://${Bucket}/${Key}`);
     const response = await s3Client.send(command);
@@ -64,7 +74,9 @@ Worker.prototype.stream = async function ({ filename }) {
 };
 Worker.prototype.stream.metadata = {
   options: {
-    filename: {}
+    filename: {},
+    start: { description: 'Inclusive starting byte (Range)' },
+    end: { description: 'Inclusive ending byte (Range)' }
   }
 };
 Worker.prototype.copy = async function ({ filename, target }) {
