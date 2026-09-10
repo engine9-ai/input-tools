@@ -717,22 +717,24 @@ Worker.prototype.put.metadata = {
     file: { description: 'Remote object/file name; defaults to the local file basename' }
   }
 };
-async function streamToString(stream) {
-  // lets have a ReadableStream as a stream variable
+async function streamToBuffer(stream) {
   const chunks = [];
   for await (const chunk of stream) {
-    chunks.push(Buffer.from(chunk));
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
-  return Buffer.concat(chunks).toString('utf-8');
+  return Buffer.concat(chunks);
 }
 /*
 Retrieves and parsed
 */
 Worker.prototype.json = async function (opts) {
   const { stream } = await this.stream(opts);
-  const str = await streamToString(stream);
+  let buf = await streamToBuffer(stream);
+  if (String(opts.filename || '').toLowerCase().endsWith('.gz')) {
+    buf = zlib.gunzipSync(buf);
+  }
   try {
-    return JSON5.parse(str);
+    return JSON5.parse(buf.toString('utf-8'));
   } catch (e) {
     debug(e);
     throw new Error(`Unparseable JSON received: ${opts.filename || '(native stream)'}`);
@@ -740,7 +742,7 @@ Worker.prototype.json = async function (opts) {
 };
 Worker.prototype.json.metadata = {
   options: {
-    filename: { description: 'Get a javascript object from a file' }
+    filename: { description: 'Get a javascript object from a file. `.gz` is gunzipped first.' }
   }
 };
 Worker.prototype.list = async function ({ directory, start: s, end: e, depth: depthOpt, postfix }) {
