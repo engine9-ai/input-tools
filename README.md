@@ -142,10 +142,12 @@ Worker-style class (`new FileUtilities({ accountId })`) for local and remote pat
 
 | Scheme | Backend | Auth |
 | ------ | ------- | ---- |
-| `s3://bucket/key` | AWS S3 | Default AWS credential chain |
-| `r2://bucket/key` | Cloudflare R2 | `CLOUDFLARE_R2_*` env vars |
-| `gdrive://{folderId}/{file}` | Google Drive | `GOOGLE_APPLICATION_CREDENTIALS` JSON key **with** `subject_to_impersonate` |
-| `gs://bucket/key` (alias `gcs://`) | Google Cloud Storage | Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS` or gcloud ADC). Does **not** require `subject_to_impersonate` — the same key file can serve Drive (with that field) and GCS (as the service account itself). |
+| `s3://bucket/key` | AWS S3 | Default AWS credential chain, or a key file via `credentials` (`accessKeyId` / `secretAccessKey`) |
+| `r2://bucket/key` | Cloudflare R2 | `CLOUDFLARE_R2_*` env vars, or a key file via `credentials` (`account_id`, `accessKeyId`, `secretAccessKey`) |
+| `gdrive://{folderId}/{file}` | Google Drive | `GOOGLE_APPLICATION_CREDENTIALS` JSON key **with** `subject_to_impersonate`, or the same JSON via `credentials` |
+| `gs://bucket/key` (alias `gcs://`) | Google Cloud Storage | Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS` or gcloud ADC), or a GCS service-account JSON via `credentials`. Does **not** require `subject_to_impersonate` — the same key file can serve Drive (with that field) and GCS (as the service account itself). |
+
+`new FileUtilities({ accountId, credentials })`: `credentials` is a local path, object-store URI, or already-parsed JSON object. A URI is read with **bot/default** credentials (bootstrap), then applied only to the destination scheme inferred from the file. Cross-service copy (e.g. local/`s3://` → `gs://`) keeps default auth on the source.
 
 Cross-service `copy` / `move` (e.g. `s3://…` → `gs://…`) downloads to a temp file then uploads. Same-service copies use native APIs. `transform` can take a remote `targetFilename` (`gs://…`); it writes a local temp file then `put`s to the destination.
 

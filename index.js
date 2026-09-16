@@ -7,6 +7,7 @@ import { v4 as uuidv4, v5 as uuidv5, v7 as uuidv7, validate as uuidIsValid } fro
 import archiver from 'archiver';
 import handlebars from 'handlebars';
 import FileUtilities from './file/FileUtilities.js';
+import { inferCredentialsScheme } from './file/credentials.js';
 import tools from './file/tools.js';
 import ForEachEntry from './ForEachEntry.js';
 import { TIMELINE_ENTRY_TYPES } from './timelineTypes.js';
@@ -492,6 +493,7 @@ export { getVersionedUUID };
 export { getUUIDTimestamp };
 export { handlebars };
 export { getServicePrefix };
+export { inferCredentialsScheme };
 export { isRemotePath };
 export { isValidDate };
 export { joinRemotePath };
@@ -547,6 +549,7 @@ export default {
   getVersionedUUID,
   getUUIDTimestamp,
   handlebars,
+  inferCredentialsScheme,
   isRemotePath,
   isValidDate,
   joinRemotePath,

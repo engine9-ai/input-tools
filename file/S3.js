@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import withDb from 'mime-type/with-db';
 import clientS3 from '@aws-sdk/client-s3';
 import { getTempFilename, getFilePostfix, normalizeListDepth, relativeDate } from './tools.js';
+import { s3ClientConfig } from './credentials.js';
 const debug = debug$0('@engine9/input/S3');
 const { mimeType: mime } = withDb;
 const {
@@ -29,7 +30,9 @@ function getParts(filename) {
   return { Bucket, Key };
 }
 Worker.prototype.getClient = function () {
-  if (!this.client) this.client = new S3Client({});
+  if (!this.client) {
+    this.client = this.resolvedCredentials ? new S3Client(s3ClientConfig(this.resolvedCredentials)) : new S3Client({});
+  }
   return this.client;
 };
 Worker.prototype.getMetadata = async function ({ filename }) {

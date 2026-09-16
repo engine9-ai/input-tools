@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import withDb from 'mime-type/with-db';
 import { Storage } from '@google-cloud/storage';
 import { getTempFilename, getFilePostfix, normalizeListDepth, relativeDate } from './tools.js';
+import { gcsClientConfig } from './credentials.js';
 
 const debug = debug$0('@engine9/input/GCS');
 const { mimeType: mime } = withDb;
@@ -35,9 +36,15 @@ function toGsUri(bucket, key) {
 }
 
 Worker.prototype.getClient = function () {
-  // Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS or gcloud ADC).
-  // Unlike Google Drive, do not require subject_to_impersonate.
-  if (!this.client) this.client = new Storage();
+  if (!this.client) {
+    if (this.resolvedCredentials) {
+      this.client = new Storage(gcsClientConfig(this.resolvedCredentials));
+    } else {
+      // Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS or gcloud ADC).
+      // Unlike Google Drive, do not require subject_to_impersonate.
+      this.client = new Storage();
+    }
+  }
   return this.client;
 };
 

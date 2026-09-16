@@ -28,6 +28,7 @@ import {
   CSV_STRINGIFY_OPTIONS
 } from './tools.js';
 import { writeUniqueRecords, withUniqueRecords } from '../writeUniqueRecords.js';
+import { inferCredentialsScheme } from './credentials.js';
 const fsp = fs.promises;
 const { Readable, Transform, PassThrough, Writable } = nodestream;
 const { pipeline } = promises;
@@ -35,8 +36,9 @@ const { pipeline } = promises;
 const debug = debug$0('@engine9/file');
 const { getXlsxStream } = xlstream;
 
-function Worker({ accountId }) {
-  this.accountId = accountId;
+function Worker(opts = {}) {
+  this.accountId = opts.accountId;
+  if (opts.credentials != null) this.credentials = opts.credentials;
 }
 /*
 Return the remote-service worker for a given path, or null if it's a local path.
@@ -47,11 +49,63 @@ function isRemote(p) {
 }
 function getServiceWorker(owner, p) {
   if (typeof p !== 'string') return null;
-  if (p.startsWith('s3://')) return new S3Worker(owner);
-  if (p.startsWith('r2://')) return new R2Worker(owner);
-  if (p.startsWith('gdrive://')) return new GoogleDriveWorker(owner);
-  if (p.startsWith('gs://') || p.startsWith('gcs://')) return new GCSWorker(owner);
-  return null;
+  let worker = null;
+  if (p.startsWith('s3://')) worker = new S3Worker(owner);
+  else if (p.startsWith('r2://')) worker = new R2Worker(owner);
+  else if (p.startsWith('gdrive://')) worker = new GoogleDriveWorker(owner);
+  else if (p.startsWith('gs://') || p.startsWith('gcs://')) worker = new GCSWorker(owner);
+  if (worker && owner?._resolvedCredentials && owner._credentialsScheme === worker.prefix) {
+    worker.resolvedCredentials = owner._resolvedCredentials;
+  }
+  return worker;
+}
+
+async function loadCredentialsDocument(owner, uri) {
+  const bootstrap = new Worker({ accountId: owner.accountId });
+  if (isRemote(uri)) return bootstrap.json({ filename: uri });
+  const raw = await fsp.readFile(uri, 'utf8');
+  try {
+    return JSON5.parse(raw);
+  } catch (e) {
+    throw new Error(`Could not parse credentials file ${uri}: ${e.message}`);
+  }
+}
+
+Worker.prototype.ensureCredentials = async function () {
+  if (this._credentialsPromise) return this._credentialsPromise;
+  this._credentialsPromise = (async () => {
+    const spec = this.credentials;
+    if (spec == null || spec === '') {
+      this._resolvedCredentials = null;
+      this._credentialsScheme = null;
+      return null;
+    }
+    let parsed = spec;
+    if (typeof spec === 'string') {
+      parsed = await loadCredentialsDocument(this, spec);
+    } else if (typeof spec !== 'object' || Array.isArray(spec)) {
+      throw new Error('credentials must be a key-file path/URI or a JSON object');
+    }
+    this._resolvedCredentials = parsed;
+    this._credentialsScheme = inferCredentialsScheme(parsed);
+    debug(
+      'loaded %s destination credentials from %s',
+      this._credentialsScheme,
+      typeof spec === 'string' ? spec : '(inline)'
+    );
+    return parsed;
+  })();
+  try {
+    return await this._credentialsPromise;
+  } catch (e) {
+    this._credentialsPromise = null;
+    throw e;
+  }
+};
+
+async function getReadyServiceWorker(owner, p) {
+  await owner.ensureCredentials();
+  return getServiceWorker(owner, p);
 }
 /** Node readable.setEncoding() only accepts a small set of names; map detector output. */
 function nodeReadableEncoding(encoding) {
@@ -195,7 +249,7 @@ Worker.prototype.xlsxToObjectStream = async function (options) {
   let { filename } = options;
   if (isRemote(filename)) {
     // We need to copy locally first so xlstream can read from disk
-    const worker = getServiceWorker(this, filename);
+    const worker = await getReadyServiceWorker(this, filename);
     if (filename.startsWith('gdrive://') || filename.startsWith('gs://') || filename.startsWith('gcs://')) {
       const { filename: local } = await worker.download({ filename });
       filename = local;
@@ -589,7 +643,7 @@ Worker.prototype.stream = async function (options) {
       stream = (await pq.stream({ filename, columns, limit })).stream;
       encoding = 'object';
     } else if (isRemote(filename)) {
-      const serviceWorker = getServiceWorker(this, filename);
+      const serviceWorker = await getReadyServiceWorker(this, filename);
       stream = (await serviceWorker.stream({ filename, columns, limit, start, end })).stream;
       encoding = 'UTF-8';
     } else {
@@ -652,7 +706,7 @@ Worker.prototype.write = async function (opts) {
   const { filename, content } = opts;
   const exclusive = bool(opts.exclusive, false);
   if (isRemote(filename)) {
-    const worker = getServiceWorker(this, filename);
+    const worker = await getReadyServiceWorker(this, filename);
     const parts = filename.split('/');
     const directory = parts.slice(0, -1).join('/');
     const file = parts.slice(-1)[0];
@@ -699,7 +753,7 @@ Worker.prototype.put = async function (opts) {
     directoryResolved = directory;
     fileResolved = file ?? path.basename(filename);
   }
-  const worker = getServiceWorker(this, directoryResolved);
+  const worker = await getReadyServiceWorker(this, directoryResolved);
   if (!worker) throw new Error('put destination must use s3://, r2://, gdrive://, or gs://');
   return worker.put({
     filename,
@@ -753,7 +807,7 @@ Worker.prototype.list = async function ({ directory, start: s, end: e, depth: de
   if (e) end = relativeDate(e);
   const maxDepth = normalizeListDepth(depthOpt);
   if (isRemote(directory)) {
-    const worker = getServiceWorker(this, directory);
+    const worker = await getReadyServiceWorker(this, directory);
     return worker.list({ directory, start, end, depth: maxDepth, postfix });
   }
   if (maxDepth) {
@@ -818,7 +872,7 @@ Worker.prototype.list.metadata = {
 Worker.prototype.analyzeDirectory = async function ({ directory }) {
   if (!directory) throw new Error('directory is required');
   if (isRemote(directory)) {
-    const worker = getServiceWorker(this, directory);
+    const worker = await getReadyServiceWorker(this, directory);
     return worker.analyzeDirectory({ directory });
   }
   let fileCount = 0;
@@ -874,7 +928,7 @@ Worker.prototype.listAll = async function ({ directory, start: s, end: e }) {
   if (s) start = relativeDate(s).getTime();
   if (e) end = relativeDate(e).getTime();
   if (isRemote(directory)) {
-    const worker = getServiceWorker(this, directory);
+    const worker = await getReadyServiceWorker(this, directory);
     return worker.listAll({ directory, start, end });
   }
   const a = await fsp.readdir(directory, { recursive: true });
@@ -921,7 +975,7 @@ Worker.prototype.moveAll = async function (options) {
   // Same-service remote: use the service worker's native moveAll.
   // Cross-service (e.g. s3:// → gs://): list on source and copy/move via FileUtilities.
   if (isRemote(directory) && sourcePrefix && targetPrefix && sourcePrefix === targetPrefix) {
-    const worker = getServiceWorker(this, directory);
+    const worker = await getReadyServiceWorker(this, directory);
     return worker.moveAll(options);
   }
   const a = await this.listAll(options);
@@ -1044,7 +1098,7 @@ Worker.prototype.remove = async function ({ filename }) {
   if (!filename) throw new Error('filename is required');
   if (typeof filename !== 'string') throw new Error(`filename isn't a string:${JSON.stringify(filename)}`);
   if (isRemote(filename)) {
-    const worker = getServiceWorker(this, filename);
+    const worker = await getReadyServiceWorker(this, filename);
     await worker.remove({ filename });
   } else {
     await fsp.unlink(filename);
@@ -1077,7 +1131,7 @@ Worker.prototype.move = async function ({ filename, target, remove = true }) {
         }
       }
     }
-    const worker = getServiceWorker(this, target);
+    const worker = await getReadyServiceWorker(this, target);
     if (sourcePrefix) {
       // Prefer service-native move (e.g. Drive reparent/rename) instead of copy+delete,
       // which can leave duplicates if delete fails and surfaces misleading "permission" errors.
@@ -1089,7 +1143,15 @@ Worker.prototype.move = async function ({ filename, target, remove = true }) {
       return output;
     }
     // Local source -> remote target
-    return this.put({ filename, target });
+    const output = await this.put({ filename, target });
+    if (remove) {
+      try {
+        await fsp.unlink(filename);
+      } catch (e) {
+        debug('local source cleanup after put failed path=%s err=%s', filename, e.message);
+      }
+    }
+    return { filename: output?.filename || target };
   }
   if (sourcePrefix) {
     throw new Error('Cannot move a remote file to a local path via move; use download instead');
@@ -1133,7 +1195,7 @@ Worker.prototype.stat = async function ({ filename }) {
     output.records = (await pq.meta({ filename }))?.records;
   }
   if (isRemote(filename)) {
-    const worker = getServiceWorker(this, filename);
+    const worker = await getReadyServiceWorker(this, filename);
     Object.assign(output, await worker.stat({ filename }));
   } else {
     const { ctime, birthtime, size } = await fsp.stat(filename);
@@ -1159,7 +1221,7 @@ Worker.prototype.getDirectoryName = async function ({ directory }) {
   const normalized = String(directory).replace(/[/\\]+$/, '');
   if (normalized.startsWith('gdrive://')) {
     try {
-      const worker = getServiceWorker(this, normalized);
+      const worker = await getReadyServiceWorker(this, normalized);
       const folder = await worker.getFolder({ directory: normalized });
       if (folder?.name) return folder.name;
     } catch (e) {
@@ -1182,7 +1244,7 @@ Worker.prototype.getDirectoryName.metadata = {
 Worker.prototype.download = async function ({ filename }) {
   if (!filename) throw new Error('filename is required');
   if (isRemote(filename)) {
-    const worker = getServiceWorker(this, filename);
+    const worker = await getReadyServiceWorker(this, filename);
     return worker.download({ filename });
   }
   throw new Error('Cannot download a local file');

@@ -74,6 +74,21 @@ function toDate(v) {
 }
 
 Worker.prototype.setAuth = async function () {
+    if (this.resolvedCredentials) {
+        const settings = this.resolvedCredentials;
+        if (!settings.subject_to_impersonate) {
+            throw new Error('Drive credentials require subject_to_impersonate');
+        }
+        const auth = new google.auth.GoogleAuth({
+            credentials: settings,
+            clientOptions: {
+                subject: settings.subject_to_impersonate
+            },
+            scopes: ['https://www.googleapis.com/auth/drive']
+        });
+        google.options({ auth });
+        return;
+    }
     const keyFile = process.env.GOOGLE_APPLICATION_CREDENTIALS;
     if (!keyFile) {
         throw new Error(
