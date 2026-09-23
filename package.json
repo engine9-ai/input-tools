@@ -1,12 +1,15 @@
 {
   "name": "@engine9/input-tools",
-  "version": "2.4.3",
+  "version": "2.4.4",
   "type": "module",
   "description": "Cross-environment utilities for Engine9-style inputs (no server-only or optional-engine coupling; e.g. DuckDB paths belong in the server app)",
   "main": "index.js",
   "scripts": {
     "test-big-data": "export DEBUG=*;node --test --test-name-pattern=big-data",
     "test": "export DEBUG=*;node --test --test-skip-pattern=big-data"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "author": "Engine9",
   "license": "GPL-3.0-or-later",

@@ -5,7 +5,15 @@ Cross-environment utilities for reading, writing, and processing engine9-style i
 ```javascript
 import inputTools from '@engine9/input-tools';
 // or named imports:
-import { relativeDate, handlebars, getTimelineEntryUUID } from '@engine9/input-tools';
+import {
+  ForEachEntry,
+  FileUtilities,
+  joinRemotePath,
+  getTempDir,
+  getInputUUID,
+  loadTableMetadata,
+  promoteUpdateFiles
+} from '@engine9/input-tools';
 ```
 
 ## Scope
@@ -128,7 +136,178 @@ Stream one typed member to a temp file; returns `{ filename }`.
 
 ### `ForEachEntry`
 
-Class for batch-processing packet contents with transforms, bindings, and optional CSV output streams. Construct with `{ accountId }`, then call `process({ packet, transform, batchSize, concurrency, bindings, ... })`.
+Class for batch-processing packet contents with transforms, bindings, and optional output streams. Construct with `{ accountId }`, then call `process({ packet, transform, batchSize, concurrency, bindings, ... })`.
+
+`output.stream` writes a local `{uuidv7}.update.csv.gz` file, then moves it. `output.timeline` writes `{uuidv7}.timeline.csv.gz` (override either with `options.postfix` or `options.format`). Timeline files are not update uploads, so the name does not contain `.update.`. Remote stores cannot append in place.
+
+The destination is `bindings.<name>.options.directory` when that is set. When it is omitted and `process` was given `filename`, the destination is that file's parent directory (`directoryFromFilename` — local paths and `s3://`, `r2://`, `gs://`, `gdrive://`). Packet input has no parent, so those outputs stay in the temp file unless `directory` is set.
+
+`output.timeline` requires `person_id` and defaults `ts`. Timeline rows missing `id` get a uuidv7 when a destination directory is used. `output.stream` into a directory requires `metadata.json` there. If it is missing, the error includes a command: `engine9 putMetadata --directory='<directory>' --metadata='{"primary_key":"<column>","format":"csv.gz"}'`. The primary key on each update row is that file's `primary_key`.
+
+See [Append tables](#append-tables) for how other libraries should pick `directory` and write updates.
+
+---
+
+## Append tables
+
+A table is one self-contained directory. There is no catalog database; metadata, sources, and updates all live together. This package is the portable contract for that directory — CLIs, plugins, and other libraries should depend on these helpers rather than inventing a parallel layout.
+
+```text
+<table-dir>/
+  metadata.json                 # optional
+  2024-01-base.csv.gz           # source (no .update. in the basename)
+  0199a0c5-....update.csv.gz    # update (MUST contain .update.)
+```
+
+Rule: The directory **is** the table. Pass that path around; do not reconstruct it from row contents.
+
+### Using from another library
+
+Typical writer (batch a source file, push rows, land an update file in the table directory):
+
+```javascript
+import {
+  ForEachEntry,
+  FileUtilities,
+  joinRemotePath,
+  loadTableMetadata
+} from '@engine9/input-tools';
+
+const files = new FileUtilities({ accountId });
+const directory = joinRemotePath(base, 'people'); // see "Choosing a directory"
+const meta = await loadTableMetadata(directory, files);
+
+const foreach = new ForEachEntry({ accountId });
+const { outputFiles } = await foreach.process({
+  filename: sourceCsv,
+  bindings: {
+    out: {
+      path: 'output.stream',
+      options: {
+        directory,
+        format: meta.format,           // default csv.gz
+        primary_key: meta.primary_key  // default id
+      }
+    }
+  },
+  async transform({ batch, out }) {
+    for (const row of batch) {
+      out.push({ id: row.id, status: 'ok', 'x.y.z': 123 });
+    }
+  }
+});
+// outputFiles.out[0].filename is inside directory after promote
+```
+
+Omit `directory` when the files should sit next to the file you just read. `output.stream` and `output.timeline` can be used together. Timeline files are named `{uuid}.timeline.csv.gz`. An update file requires `metadata.json` in that directory, with `primary_key` set to the row identity column.
+
+```javascript
+const { outputFiles } = await foreach.process({
+  filename: sourceCsv,
+  bindings: {
+    updates: { path: 'output.stream' },
+    timeline: { path: 'output.timeline' }
+  },
+  async transform({ batch, updates, timeline }) {
+    for (const row of batch) {
+      updates.push({ id: row.id, status: 'ok' });
+      timeline.push({
+        person_id: row.person_id,
+        ts: row.ts,
+        entry_type_id: row.entry_type_id
+      });
+    }
+  }
+});
+// both files are in the parent directory of sourceCsv
+```
+
+`output.timeline` requires `person_id` and defaults `ts`. Timeline rows missing `id` get a uuidv7. `output.stream` rows need the `primary_key` declared in `metadata.json`.
+
+Do this:
+
+- Write **local** then `move` into the directory (`ForEachEntry` does this; or call `promoteUpdateFiles` yourself). Object stores cannot append in place.
+- Put `.update.` in every update basename (`ensureUpdateFilename` / `updateFilePostfix`).
+- Include `metadata.json` `primary_key` on every update row. Extra fields (status, nested dotted keys) are allowed.
+- Use `joinRemotePath` for every path join. Node `path.join` collapses `gs://` / `s3://`.
+- Treat `loadTableMetadata` defaults as authoritative when `metadata.json` is absent.
+
+Do not:
+
+- Stream-append to an `s3://`, `r2://`, or `gs://` key.
+- Mix side files (`metadata.json`, `seen_records*`, locks) into a reader’s data list — use `isTableSideFile`.
+- Guess an engine9 input-store path when the host can give you a directory (see below).
+- Use `getTempDir` as a durable table. It is a daily scratch folder.
+
+Without `ForEachEntry`, write a local `{uuidv7}.update.csv.gz` (or jsonl), then:
+
+```javascript
+import { promoteUpdateFiles, ensureUpdateFilename } from '@engine9/input-tools';
+
+await promoteUpdateFiles({
+  fileWorker: files,
+  files: [{ filename: ensureUpdateFilename(localPath), records }],
+  directory
+});
+```
+
+Exported helpers: `loadTableMetadata`, `directoryFromFilename`, `isUpdateFile`, `isTableSideFile`, `updateFilePostfix`, `ensureUpdateFilename`, `promoteUpdateFiles`, plus `DEFAULT_PRIMARY_KEY`, `DEFAULT_FORMAT`, `METADATA_FILENAME`.
+
+### Choosing a directory
+
+Pick **one** durable directory per table and reuse it. Resolution, in order:
+
+| Situation | How to get `directory` |
+| --- | --- |
+| `ForEachEntry` is reading a file | Omit `options.directory`. The parent of `filename` is used. |
+| Host already has the table | Use that path as-is. Prefer this when the table directory is chosen separately from the input file. |
+| engine9 account worker | `await accountWorker.getStoreDirectory({ inputId })` (server). Honors `input.data_path` when set. **Not** in this package — input-tools has no `store_path` or SQL. |
+| Host cannot run the worker | Ask the host to pass `directory` (and optionally `input_id`). Do not invent `{store_path}/…` in a plugin if the host can resolve it. |
+| Standalone table (no warehouse input) | `joinRemotePath(base, …)` under a location **you** own. Examples: `joinRemotePath('/var/data', 'tables', 'people')` or `joinRemotePath('s3://bucket/app', accountId, 'people')`. |
+| Tests / one-off scratch | `await getTempDir({ accountId })` then a subfolder via `joinRemotePath`. Scratch is not a lake. |
+
+Optional: after you have `directory`, `await files.list({ directory })` (create it on first write if missing). Write `metadata.json` with `FileUtilities.write` when you want a declared primary key / format / `input_id`.
+
+If you must compose an engine9-style input store without `getStoreDirectory`, the usual layout is:
+
+```text
+joinRemotePath(storePath, accountId, 'plugins', pluginId, inputType, inputId.slice(0, 4), inputId)
+```
+
+`inputId` must be `getInputUUID({ pluginId, remoteInputId })`, not a random UUID. Prefer `getStoreDirectory` whenever SQL is available — `data_path` overrides this layout.
+
+### `metadata.json` (optional)
+
+When present, marks the directory as a table-style store. Extra fields pass through.
+
+| Field | Default / notes |
+| --- | --- |
+| `type` | `"table"` |
+| `description` | Human text |
+| `primary_key` | `"id"` |
+| `format` | Preferred extension for new update files, e.g. `csv.gz`, `jsonl.gz`, `parquet` |
+| `input_id` | Often set; not required |
+
+Absent metadata: treat the directory as a table with `primary_key: "id"` and `format: "csv.gz"`. `ForEachEntry` currently writes **csv** or **jsonl** (optionally gzipped), not parquet.
+
+### Files
+
+- **Sources** — any input-tools-supported tabular files whose basename does **not** contain `.update.`.
+- **Updates** — basename contains `.update.` (e.g. `{uuidv7}.update.csv.gz`). Rows are keyed by `primary_key`. Update rows MAY add columns/fields that do not exist on the sources.
+- **Side files** — skip `metadata.json`, `seen_records*`, locks, sqlite sidecars, `.error.json`, `.idv1.parquet`.
+
+### Reading a table (contract — not implemented here)
+
+input-tools does **not** ship a merged reader. Server, DuckDB, or a future helper should:
+
+1. List data files (exclude side files). Optionally prefer `metadata.format` when filtering.
+2. Sort **ascending by date** by default: use the uuidv7 timestamp when the basename starts with a uuidv7 (`getUUIDTimestamp`), else file mtime, else lexicographic name.
+3. Stream each file in that order (`FileUtilities.fileToObjectStream` / `stream`). Upsert into a map keyed by `primary_key`.
+4. **Merge:** later files update the same key. Apply fields with **dotted notation** as the default for nested objects:
+   - Column/key `x.y.z` with value `123` sets `obj.x.y.z = 123` and must **not** wipe sibling `obj.x.y.a`.
+   - Example: existing `{ x: { y: { a: 'zxv' } } }` plus update `x.y.z=123` yields `{ x: { y: { a: 'zxv', z: 123 } } }`.
+   - Keys omitted from an update leave prior values. Explicit null/empty handling is implementation-defined for later readers.
+5. Final state per key is the merged object after the last file.
 
 ---
 
@@ -241,5 +420,5 @@ The default export is an object containing all named exports above for `import i
 
 ## Related packages
 
-- **engine9 server** — workers bind `tools.relativeDate`, `tools.handlebars`, and `FileUtilities` for imports/exports.
+- **engine9 server** — workers bind `tools.relativeDate`, `tools.handlebars`, and `FileUtilities` for imports/exports. Account workers resolve input-store directories with `getStoreDirectory({ inputId })`; pass that path into append-table writers as `directory`.
 - **Export definitions** — Handlebars merges in `server/utilities/exportDefinitionMerge.js`; use `{{date (or overrides.start "-30d")}}` in raw EQL conditions.

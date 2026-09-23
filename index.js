@@ -23,6 +23,19 @@ import {
   SEEN_RECORDS_FILENAME,
   SEEN_RECORDS_LOCK_FILENAME
 } from './writeUniqueRecords.js';
+import {
+  DEFAULT_FORMAT,
+  DEFAULT_PRIMARY_KEY,
+  METADATA_FILENAME,
+  isUpdateFile,
+  isTableSideFile,
+  loadTableMetadata,
+  directoryFromFilename,
+  missingTableMetadataError,
+  updateFilePostfix,
+  ensureUpdateFilename,
+  promoteUpdateFiles
+} from './appendTable.js';
 const debug = debug$0('@engine9/input-tools');
 
 const {
@@ -515,6 +528,17 @@ export { FINGERPRINT_HASH };
 export { isSeenRecordsFile };
 export { SEEN_RECORDS_FILENAME };
 export { SEEN_RECORDS_LOCK_FILENAME };
+export { DEFAULT_FORMAT };
+export { DEFAULT_PRIMARY_KEY };
+export { METADATA_FILENAME };
+export { isUpdateFile };
+export { isTableSideFile };
+export { loadTableMetadata };
+export { directoryFromFilename };
+export { missingTableMetadataError };
+export { updateFilePostfix };
+export { ensureUpdateFilename };
+export { promoteUpdateFiles };
 export { uuidIsValid };
 export { uuidv4 };
 export { uuidv5 };
@@ -571,6 +595,17 @@ export default {
   isSeenRecordsFile,
   SEEN_RECORDS_FILENAME,
   SEEN_RECORDS_LOCK_FILENAME,
+  DEFAULT_FORMAT,
+  DEFAULT_PRIMARY_KEY,
+  METADATA_FILENAME,
+  isUpdateFile,
+  isTableSideFile,
+  loadTableMetadata,
+  directoryFromFilename,
+  missingTableMetadataError,
+  updateFilePostfix,
+  ensureUpdateFilename,
+  promoteUpdateFiles,
   uuidIsValid,
   uuidv4,
   uuidv5,
