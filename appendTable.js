@@ -122,6 +122,39 @@ export function directoryFromFilename(filename) {
   return dir || '.';
 }
 
+/**
+ * Merge (default) or replace metadata.json in a table directory.
+ * `directory` is any local or remote directory (`s3://`, `r2://`, `gs://`, …), same as an input store.
+ * Join a relative path with `joinRemotePath(storePath, rel)` first. Absolute paths and remote URIs pass through.
+ * Optional `normalize(obj)` runs on existing and incoming objects before merge (e.g. snake_case keys).
+ */
+export async function writeTableMetadata(directory, metadata, fileWorker, { merge = true, normalize } = {}) {
+  if (!directory) throw new Error('writeTableMetadata requires directory');
+  if (!fileWorker || typeof fileWorker.write !== 'function') {
+    throw new Error('writeTableMetadata requires fileWorker with write()');
+  }
+  if (metadata == null || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    throw new Error('writeTableMetadata requires a metadata object');
+  }
+  const map = typeof normalize === 'function' ? normalize : (o) => o;
+  const filename = joinRemotePath(directory, METADATA_FILENAME);
+  let existing = {};
+  if (merge) {
+    try {
+      if (typeof fileWorker.json !== 'function') {
+        throw new Error('writeTableMetadata merge requires fileWorker.json()');
+      }
+      const parsed = await fileWorker.json({ filename });
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed;
+    } catch (e) {
+      if (!isNotFoundError(e)) throw e;
+    }
+  }
+  const next = { ...map(existing), ...map(metadata) };
+  await fileWorker.write({ filename, content: JSON.stringify(next, null, 4) });
+  return next;
+}
+
 function defaultMetadata(directory) {
   return {
     type: DEFAULT_TABLE_TYPE,

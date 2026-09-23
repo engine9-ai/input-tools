@@ -80,6 +80,13 @@ describe('remote path helpers', () => {
       'gs://bucket/prefix/a/b.csv'
     );
   });
+
+  it('joinRemotePath joins a relative directory onto a local or remote store root', () => {
+    assert.equal(joinRemotePath('/var/store', 'acct/plugins/x'), '/var/store/acct/plugins/x');
+    assert.equal(joinRemotePath('s3://bucket/inputs', 'acct/plugins/x'), 's3://bucket/inputs/acct/plugins/x');
+    assert.equal(joinRemotePath('gs://bucket/a/'), 'gs://bucket/a');
+    assert.equal(joinRemotePath('r2://bucket/dir/', 'table'), 'r2://bucket/dir/table');
+  });
 });
 
 describe('FileUtilities routing', () => {

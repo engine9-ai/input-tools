@@ -31,6 +31,7 @@ import {
   isTableSideFile,
   loadTableMetadata,
   directoryFromFilename,
+  writeTableMetadata,
   missingTableMetadataError,
   updateFilePostfix,
   ensureUpdateFilename,
@@ -535,6 +536,7 @@ export { isUpdateFile };
 export { isTableSideFile };
 export { loadTableMetadata };
 export { directoryFromFilename };
+export { writeTableMetadata };
 export { missingTableMetadataError };
 export { updateFilePostfix };
 export { ensureUpdateFilename };
@@ -602,6 +604,7 @@ export default {
   isTableSideFile,
   loadTableMetadata,
   directoryFromFilename,
+  writeTableMetadata,
   missingTableMetadataError,
   updateFilePostfix,
   ensureUpdateFilename,

@@ -251,7 +251,7 @@ await promoteUpdateFiles({
 });
 ```
 
-Exported helpers: `loadTableMetadata`, `directoryFromFilename`, `isUpdateFile`, `isTableSideFile`, `updateFilePostfix`, `ensureUpdateFilename`, `promoteUpdateFiles`, plus `DEFAULT_PRIMARY_KEY`, `DEFAULT_FORMAT`, `METADATA_FILENAME`.
+Exported helpers: `loadTableMetadata`, `writeTableMetadata`, `directoryFromFilename`, `isUpdateFile`, `isTableSideFile`, `updateFilePostfix`, `ensureUpdateFilename`, `promoteUpdateFiles`, plus `DEFAULT_PRIMARY_KEY`, `DEFAULT_FORMAT`, `METADATA_FILENAME`.
 
 ### Choosing a directory
 
@@ -261,12 +261,13 @@ Pick **one** durable directory per table and reuse it. Resolution, in order:
 | --- | --- |
 | `ForEachEntry` is reading a file | Omit `options.directory`. The parent of `filename` is used. |
 | Host already has the table | Use that path as-is. Prefer this when the table directory is chosen separately from the input file. |
+| Relative path under a store root | `joinRemotePath(storePath, rel)` — the same join as an input store (`s3://`, `r2://`, `gs://`, `gdrive://`, or a local directory). Absolute paths and remote URIs are already directories; pass them through. `joinRemotePath` normalizes `gcs://` to `gs://`. |
 | engine9 account worker | `await accountWorker.getStoreDirectory({ inputId })` (server). Honors `input.data_path` when set. **Not** in this package — input-tools has no `store_path` or SQL. |
 | Host cannot run the worker | Ask the host to pass `directory` (and optionally `input_id`). Do not invent `{store_path}/…` in a plugin if the host can resolve it. |
 | Standalone table (no warehouse input) | `joinRemotePath(base, …)` under a location **you** own. Examples: `joinRemotePath('/var/data', 'tables', 'people')` or `joinRemotePath('s3://bucket/app', accountId, 'people')`. |
 | Tests / one-off scratch | `await getTempDir({ accountId })` then a subfolder via `joinRemotePath`. Scratch is not a lake. |
 
-Optional: after you have `directory`, `await files.list({ directory })` (create it on first write if missing). Write `metadata.json` with `FileUtilities.write` when you want a declared primary key / format / `input_id`.
+Optional: after you have `directory`, `await files.list({ directory })` (create it on first write if missing). Write `metadata.json` with `writeTableMetadata(directory, fields, files)` (merge by default; pass `{ merge: false }` to replace). Hosts that need key normalization (e.g. camelCase → snake_case) can pass `{ normalize }`.
 
 If you must compose an engine9-style input store without `getStoreDirectory`, the usual layout is:
 

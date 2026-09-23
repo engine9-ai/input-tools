@@ -15,7 +15,8 @@ import {
   isUpdateFile,
   loadTableMetadata,
   promoteUpdateFiles,
-  updateFilePostfix
+  updateFilePostfix,
+  writeTableMetadata
 } from '../appendTable.js';
 
 const files = new FileUtilities({ accountId: 'test' });
@@ -96,6 +97,35 @@ describe('loadTableMetadata', () => {
       assert.equal(meta.metadata_present, true);
       assert.equal(meta.description, 'Sample people');
       assert.deepEqual(meta.extra, { owner: 'test' });
+    } finally {
+      await fsp.rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('writeTableMetadata', () => {
+  it('merges and normalizes keys into metadata.json', async () => {
+    const directory = path.join(os.tmpdir(), `e9-append-meta-write-${Date.now()}-${process.pid}`);
+    await fsp.mkdir(directory, { recursive: true });
+    try {
+      await writeTableMetadata(directory, { primaryKey: 'email', input_id: 'a' }, files, {
+        normalize: (o) => {
+          const out = { ...o };
+          if (out.primaryKey) {
+            out.primary_key = out.primaryKey;
+            delete out.primaryKey;
+          }
+          return out;
+        }
+      });
+      const first = await loadTableMetadata(directory, files);
+      assert.equal(first.primary_key, 'email');
+      assert.equal(first.input_id, 'a');
+      await writeTableMetadata(directory, { format: 'jsonl.gz' }, files);
+      const second = await loadTableMetadata(directory, files);
+      assert.equal(second.primary_key, 'email');
+      assert.equal(second.format, 'jsonl.gz');
+      assert.equal(second.input_id, 'a');
     } finally {
       await fsp.rm(directory, { recursive: true, force: true });
     }
