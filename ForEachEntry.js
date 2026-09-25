@@ -1,287 +1,244 @@
-import fs from 'node:fs';
-import zlib from 'node:zlib';
-import nodestream from 'node:stream';
-import promises from 'node:stream/promises';
+/**
+ * ForEachEntry — batch a person/entry file (csv, csv.gz, jsonl, parquet, xlsx, or a packet)
+ * through an async transform, with named output bindings the transform can push rows into.
+ *
+ * Output bindings (`bindings.<name> = { path, options }`):
+ *   output.dataset { dataset | directory, kind = 'update', format, primary_key, storePath, postfix, filename }
+ *                   Writes one file of `kind` into a Dataset (a directory of immutable files — not a
+ *                   warehouse table) and promotes it there.
+ *   output.stream   Scratch file in the temp dir (no directory inference). With `options.directory`
+ *                   it behaves like output.dataset with kind 'update'.
+ *   output.timeline Timeline entries (kind 'append'); requires person_id, defaults ts, assigns a
+ *                   deterministic id when the row allows it. Promoted when `options.directory` is set.
+ *   file            getFile(binding) result.      handlebars   the shared handlebars instance.
+ *
+ * Every output binding value has `push(row)`. `process()` resolves `{ outputFiles, records, batches }`
+ * where `outputFiles.<name>` is `[{ filename, records, kind, promoted }]`.
+ */
+import { Writable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { throttle } from 'throttle-debounce';
 import parallelTransform from 'parallel-transform';
 import debug$0 from 'debug';
-import { Mutex } from 'async-mutex';
-import { stringify, parse } from 'csv';
 import handlebars from 'handlebars';
 import { v7 as uuidv7 } from 'uuid';
-import ValidatingReadable from './ValidatingReadable.js';
 import FileUtilities from './file/FileUtilities.js';
-import { getTempFilename, getBatchTransform, getFile, streamPacket, CSV_STRINGIFY_OPTIONS } from './file/tools.js';
-import {
-  DEFAULT_FORMAT,
-  DEFAULT_PRIMARY_KEY,
-  directoryFromFilename,
-  ensureUpdateFilename,
-  missingTableMetadataError,
-  ensureUpdatePostfix,
-  loadTableMetadata,
-  parseTableFormat,
-  promoteUpdateFiles,
-  updateFilePostfix
-} from './appendTable.js';
-const { Transform, Writable } = nodestream;
-const { pipeline } = promises;
+import { getBatchTransform, getFile } from './file/tools.js';
+import Dataset, { DatasetWriter, hasPrimaryKey } from './Dataset.js';
+import { canComputeTimelineEntryUUID, getTimelineEntryUUID } from './uuidTools.js';
+import { DEFAULT_FORMAT, parseDatasetFormat } from './datasetLayout.js';
+
 const debug = debug$0('@engine9/input-tools');
 const debugThrottle = throttle(1000, debug, { noLeading: false, noTrailing: false });
 
-function hasPrimaryKey(data, primaryKey) {
-  const v = data?.[primaryKey];
-  return v !== undefined && v !== null && v !== '';
+const OUTPUT_PATHS = new Set(['output.dataset', 'output.stream', 'output.timeline']);
+
+function timelinePrepare({ defaults = {}, assignRandomIds }) {
+  return (row) => {
+    if (typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error('Invalid timeline data push, must be an object');
+    }
+    if (defaults.entry_type && !row.entry_type && (row.entry_type_id === undefined || row.entry_type_id === null)) {
+      row.entry_type = defaults.entry_type;
+    }
+    if (defaults.plugin_id && !row.plugin_id) row.plugin_id = defaults.plugin_id;
+    if (row.person_id === undefined || row.person_id === null || row.person_id === '') {
+      throw new Error('Invalid timeline data push, must have a person_id, even if 0');
+    }
+    if (!row.ts) row.ts = new Date().toISOString();
+    if (!hasPrimaryKey(row, 'id')) {
+      if (canComputeTimelineEntryUUID(row)) {
+        try {
+          row.id = getTimelineEntryUUID(row);
+        } catch (e) {
+          debug('deterministic timeline id failed, falling back to uuidv7: %s', e.message);
+          if (assignRandomIds) row.id = uuidv7();
+        }
+      } else if (assignRandomIds) {
+        row.id = uuidv7();
+      }
+    }
+    return row;
+  };
 }
 
 class ForEachEntry {
-  constructor({ accountId } = {}) {
-    this.fileUtilities = new FileUtilities({ accountId });
+  constructor({ accountId, fileUtilities } = {}) {
+    this.accountId = accountId;
+    this.fileUtilities = fileUtilities || new FileUtilities({ accountId });
   }
-  getOutputStream({
-    name,
-    filename,
-    postfix,
-    format,
-    directory,
-    primaryKey = DEFAULT_PRIMARY_KEY,
-    requirePrimaryKey = false,
-    isTimeline = false,
-    validatorFunction = () => true
-  }) {
-    this.outputStreams = this.outputStreams || {};
-    if (this.outputStreams[name]?.items) return this.outputStreams[name].items;
-    this.outputStreams[name] = this.outputStreams[name] || {
-      mutex: new Mutex()
-    };
-    return this.outputStreams[name].mutex.runExclusive(async () => {
-      const parsed = parseTableFormat(postfix || format || DEFAULT_FORMAT);
-      if (parsed.targetFormat !== 'csv' && parsed.targetFormat !== 'jsonl') {
-        throw new Error(
-          `ForEachEntry output writes csv or jsonl (optionally gzipped), not ${parsed.targetFormat}`
-        );
-      }
-      const resolvedPostfix = isTimeline
-        ? postfix || `.timeline.${parsed.format}`
-        : ensureUpdatePostfix(postfix || parsed.postfix);
-      let f = filename || (await getTempFilename({ postfix: resolvedPostfix }));
-      if (!isTimeline) f = ensureUpdateFilename(f);
-      const fileInfo = {
-        filename: f,
-        records: 0
-      };
-      debug(`Output file requested ${name}, writing output to: ${fileInfo.filename}`);
-      const outputStream = new ValidatingReadable(
-        {
-          objectMode: true
-        },
-        (data) => {
-          if (!data) return true;
-          if (typeof data !== 'object') throw new Error('Invalid output data push, must be an object');
-          if (!hasPrimaryKey(data, primaryKey)) {
-            if (isTimeline && primaryKey === 'id' && directory) {
-              data.id = uuidv7();
-            } else if (requirePrimaryKey) {
-              throw new Error(`Invalid append-table row, missing primary key '${primaryKey}'`);
-            }
-          }
-          return validatorFunction(data);
-        }
-      );
-      outputStream._read = () => {};
-      const writeStream = fs.createWriteStream(fileInfo.filename);
-      const finishWritingOutputPromise = new Promise((resolve, reject) => {
-        writeStream
-          .on('finish', () => {
-            resolve();
-          })
-          .on('error', (err) => {
-            reject(err);
-          });
-        outputStream.on('error', reject);
-      });
-      // Validation can reject this before process() awaits it. A handler now
-      // keeps that from becoming an unhandled rejection; the await still throws.
-      finishWritingOutputPromise.catch(() => {});
-      this.outputStreams[name].items = {
-        stream: outputStream,
-        promises: [finishWritingOutputPromise],
-        files: [fileInfo],
-        directory
-      };
-      let out = outputStream.pipe(
-        new Transform({
-          objectMode: true,
-          transform(o, enc, cb) {
-            fileInfo.records += 1;
-            cb(null, o);
-          }
-        })
-      );
-      if (parsed.targetFormat === 'jsonl') {
-        out = out.pipe(
-          new Transform({
-            objectMode: true,
-            transform(d, encoding, cb) {
-              cb(null, `${JSON.stringify(d)}\n`);
-            }
-          })
-        );
-      } else {
-        out = out.pipe(stringify(CSV_STRINGIFY_OPTIONS));
-      }
-      if (parsed.gzip) out = out.pipe(zlib.createGzip());
-      out.pipe(writeStream);
-      return this.outputStreams[name].items;
+
+  async _openDataset(options = {}) {
+    if (options.dataset instanceof Dataset) return options.dataset;
+    if (options.dataset) throw new Error('binding options.dataset must be a Dataset instance');
+    if (!options.directory) return null;
+    return Dataset.open(options.directory, {
+      fileUtilities: this.fileUtilities,
+      accountId: this.accountId,
+      storePath: options.storePath || options.store_path,
+      primary_key: options.primary_key || options.primaryKey,
+      format: options.format
     });
   }
+
+  /** Build the writer for one output binding. */
+  async _outputWriter(bindingName, binding) {
+    const options = binding.options || {};
+    const isTimeline = binding.path === 'output.timeline';
+    const dataset = await this._openDataset(options);
+    const format = options.format || dataset?.format || DEFAULT_FORMAT;
+    const parsedFormat = parseDatasetFormat(format).format;
+
+    if (isTimeline) {
+      const prepare = timelinePrepare({
+        defaults: { entry_type: options.entry_type, plugin_id: options.plugin_id },
+        assignRandomIds: Boolean(dataset)
+      });
+      const postfix = options.postfix || `.timeline.${parsedFormat}`;
+      if (dataset) {
+        return dataset.writer({ kind: 'append', format, postfix, filename: options.filename, prepare, requirePrimaryKey: false });
+      }
+      return new DatasetWriter({
+        fileUtilities: this.fileUtilities,
+        accountId: this.accountId,
+        kind: 'append',
+        format,
+        postfix,
+        filename: options.filename,
+        prepare,
+        requirePrimaryKey: false,
+        promote: false
+      });
+    }
+
+    const kind = options.kind || 'update';
+    if (dataset) {
+      return dataset.writer({
+        kind,
+        format,
+        postfix: options.postfix,
+        filename: options.filename,
+        requirePrimaryKey: options.requirePrimaryKey ?? options.require_primary_key,
+        validate: options.validate
+      });
+    }
+    if (binding.path === 'output.dataset') {
+      throw new Error(`Binding ${bindingName}: output.dataset requires options.dataset or options.directory`);
+    }
+    // Scratch output: temp file, no promotion, no key enforcement, name kept as requested.
+    return new DatasetWriter({
+      fileUtilities: this.fileUtilities,
+      accountId: this.accountId,
+      kind: options.kind || 'source',
+      format,
+      postfix: options.postfix,
+      filename: options.filename,
+      requirePrimaryKey: Boolean(options.primary_key || options.primaryKey),
+      primaryKey: options.primary_key || options.primaryKey,
+      promote: false,
+      validate: options.validate
+    });
+  }
+
+  async _inputStream({ filename, packet, stream, input = {} }) {
+    if (stream) return (await this.fileUtilities.fileToObjectStream({ stream })).stream;
+    if (filename) {
+      debug(`Processing file ${filename}`);
+      return (await this.fileUtilities.fileToObjectStream({ filename, ...input })).stream;
+    }
+    if (packet) {
+      debug(`Processing person file from packet ${packet}`);
+      return (await this.fileUtilities.stream({ packet, type: input.type || 'person' })).stream;
+    }
+    throw new Error('process requires filename, packet, or stream');
+  }
+
   async process({
     packet,
     filename,
+    stream,
+    input,
     progress,
     transform: userTransform,
     batchSize = 500,
     concurrency = 10,
     bindings = {}
   }) {
-    let inStream = null;
-    if (filename) {
-      debug(`Processing file ${filename}`);
-      inStream = (await this.fileUtilities.stream({ filename })).stream;
-    } else if (packet) {
-      debug(`Processing person file from packet ${packet}`);
-      inStream = (await streamPacket({ packet, type: 'person' })).stream;
-    }
     if (typeof userTransform !== 'function') throw new Error('async transform function is required');
     if (userTransform.length > 1) throw new Error('transform should be an async function that accepts one argument');
+    const inStream = await this._inputStream({ filename, packet, stream, input });
+
     let progressThrottle = () => {};
     if (typeof progress === 'function') {
-      const startTime = new Date().getTime();
+      const startTime = Date.now();
       progressThrottle = throttle(
         2000,
-        function ({ records, batches }) {
-          let message = `Processed ${records} across ${batches} batches,${(
-            (records * 60 * 1000) /
-            (new Date().getTime() - startTime)
-          ).toFixed(1)} records/minute`;
-          progress({ records, message });
+        ({ records, batches }) => {
+          const perMinute = ((records * 60 * 1000) / Math.max(1, Date.now() - startTime)).toFixed(1);
+          progress({ records, message: `Processed ${records} across ${batches} batches,${perMinute} records/minute` });
         },
         { noLeading: false, noTrailing: false }
       );
     }
+
+    const transformArguments = {};
+    const writers = {};
+    for (const [bindingName, binding] of Object.entries(bindings)) {
+      if (!binding?.path) throw new Error(`Invalid binding: path is required for binding ${bindingName}`);
+      if (OUTPUT_PATHS.has(binding.path)) {
+        const writer = await this._outputWriter(bindingName, binding);
+        writers[bindingName] = writer;
+        transformArguments[bindingName] = writer;
+      } else if (binding.path === 'file') {
+        transformArguments[bindingName] = await getFile(binding);
+      } else if (binding.path === 'handlebars') {
+        transformArguments[bindingName] = handlebars;
+      } else {
+        throw new Error(`Unsupported binding path for binding ${bindingName}: ${binding.path}`);
+      }
+    }
+
     let records = 0;
     let batches = 0;
-    const outputFiles = {};
-    const transformArguments = {};
-    // An array of promises that must be completed, such as writing to disk
-    let bindingPromises = [];
-    // new Streams may be created, and they have to be completed when the file is completed
-    const newStreams = [];
-    const promoteDirs = {};
-    const bindingNames = Object.keys(bindings);
-    const inferredDirectory = filename ? directoryFromFilename(filename) : null;
-    await Promise.all(
-      bindingNames.map(async (bindingName) => {
-        const binding = bindings[bindingName];
-        if (!binding.path) throw new Error(`Invalid binding: path is required for binding ${bindingName}`);
-        if (binding.path === 'output.timeline' || binding.path === 'output.stream') {
-          const isTimeline = binding.path === 'output.timeline';
-          const explicitDirectory = binding.options?.directory || null;
-          const directory = explicitDirectory || inferredDirectory || null;
-          let metadata = {
-            primary_key: DEFAULT_PRIMARY_KEY,
-            format: DEFAULT_FORMAT,
-            metadata_present: false
-          };
-          if (directory) {
-            metadata = await loadTableMetadata(directory, this.fileUtilities);
+    try {
+      await pipeline(
+        inStream,
+        getBatchTransform({ batchSize }).transform,
+        parallelTransform(concurrency, (batch, cb) => {
+          userTransform({ ...transformArguments, batch })
+            .then((d) => {
+              batches += 1;
+              records += batch?.length || 0;
+              progressThrottle({ records, batches });
+              debugThrottle(`Processed ${batches} batches for a total of ${records} records`);
+              cb(null, d ?? {});
+            })
+            .catch(cb);
+        }),
+        new Writable({
+          objectMode: true,
+          write(batch, enc, cb) {
+            cb();
           }
-          if (!isTimeline && directory && !metadata.metadata_present) {
-            throw missingTableMetadataError(directory);
-          }
-          const format = binding.options?.format || metadata.format || DEFAULT_FORMAT;
-          const primaryKey = binding.options?.primary_key || metadata.primary_key || DEFAULT_PRIMARY_KEY;
-          const basePostfix = updateFilePostfix({ format });
-          const postfix =
-            binding.options?.postfix || (isTimeline ? `.timeline.${parseTableFormat(format).format}` : basePostfix);
-          const {
-            stream: streamImpl,
-            promises,
-            files
-          } = await this.getOutputStream({
-            name: bindingName,
-            filename: binding.options?.filename,
-            postfix,
-            format,
-            directory,
-            primaryKey,
-            requirePrimaryKey:
-              !isTimeline &&
-              Boolean(directory || binding.options?.primary_key || metadata.metadata_present),
-            isTimeline,
-            validatorFunction: isTimeline
-              ? (data) => {
-                  if (!data) return true;
-                  if (typeof data !== 'object') throw new Error('Invalid timeline data push, must be an object');
-                  if (!data.person_id) throw new Error('Invalid timeline data push, must have a person_id, even if 0');
-                  if (!data.ts) data.ts = new Date().toISOString();
-                  return true;
-                }
-              : () => true
-          });
-          newStreams.push(streamImpl);
-          transformArguments[bindingName] = streamImpl;
-          bindingPromises = bindingPromises.concat(promises || []);
-          outputFiles[bindingName] = files;
-          if (directory) promoteDirs[bindingName] = { directory, asUpdate: !isTimeline };
-        } else if (binding.path === 'file') {
-          transformArguments[bindingName] = await getFile(binding);
-        } else if (binding.path === 'handlebars') {
-          transformArguments[bindingName] = handlebars;
-        } else {
-          throw new Error(`Unsupported binding path for binding ${bindingName}: ${binding.path}`);
-        }
-      })
-    );
-    await pipeline(
-      inStream,
-      parse({
-        relax: true,
-        skip_empty_lines: true,
-        max_limit_on_data_read: 10000000,
-        columns: true
-      }),
-      getBatchTransform({ batchSize }).transform,
-      parallelTransform(concurrency, (batch, cb) => {
-        userTransform({ ...transformArguments, batch })
-          .then((d) => {
-            batches += 1;
-            records += batch?.length || 0;
-            progressThrottle({ records, batches });
-            debugThrottle(`Processed ${batches} batches for a total of ${records} outbound records`);
-            cb(null, d);
-          })
-          .catch(cb);
-      }),
-      new Writable({
-        objectMode: true,
-        write(batch, enc, cb) {
-          cb();
-        }
-      })
-    );
-    debug('Completed all batches');
-    newStreams.forEach((s) => s.push(null));
-    await Promise.all(bindingPromises);
-    for (const [bindingName, target] of Object.entries(promoteDirs)) {
-      outputFiles[bindingName] = await promoteUpdateFiles({
-        fileWorker: this.fileUtilities,
-        files: outputFiles[bindingName],
-        directory: target.directory,
-        asUpdate: target.asUpdate
-      });
+        })
+      );
+    } catch (e) {
+      await Promise.all(Object.values(writers).map((w) => w.abort(e)));
+      throw e;
     }
-    return { outputFiles };
+    debug('Completed all batches');
+    const outputFiles = {};
+    const names = Object.keys(writers);
+    const ended = await Promise.allSettled(names.map((n) => writers[n].end()));
+    const failed = ended.find((r) => r.status === 'rejected');
+    if (failed) {
+      await Promise.all(names.map((n) => writers[n].abort(failed.reason)));
+      throw failed.reason;
+    }
+    names.forEach((n, i) => {
+      outputFiles[n] = [ended[i].value];
+    });
+    return { outputFiles, records, batches };
   }
 }
 export default ForEachEntry;

@@ -1,6 +1,6 @@
 import nodetest from 'node:test';
 import assert from 'node:assert';
-import * as debug$0 from 'debug';
+import debug$0 from 'debug';
 import promises from 'node:timers/promises';
 import { ForEachEntry } from '../../index.js';
 const { describe, it } = nodetest;

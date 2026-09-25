@@ -11,7 +11,7 @@ import {
   joinRemotePath,
   getTempDir,
   getInputUUID,
-  loadTableMetadata,
+  loadDatasetMetadata,
   promoteUpdateFiles
 } from '@engine9/input-tools';
 ```
@@ -136,138 +136,136 @@ Stream one typed member to a temp file; returns `{ filename }`.
 
 ### `ForEachEntry`
 
-Class for batch-processing packet contents with transforms, bindings, and optional output streams. Construct with `{ accountId }`, then call `process({ packet, transform, batchSize, concurrency, bindings, ... })`.
+Batch a file through an async transform with named output bindings. Construct with `{ accountId }` (optionally `fileUtilities`), then call `process({ filename | packet | stream, transform, batchSize, concurrency, progress, bindings })`. Input may be `csv`, `csv.gz`, `jsonl`, `parquet`, `xlsx`, a packet (`type` defaults to `person`), or an in-memory array / object stream. An instance may be reused. Resolves `{ outputFiles, records, batches }`; `outputFiles.<name>` is `[{ filename, records, kind, promoted }]`.
 
-`output.stream` writes a local `{uuidv7}.update.csv.gz` file, then moves it. `output.timeline` writes `{uuidv7}.timeline.csv.gz` (override either with `options.postfix` or `options.format`). Timeline files are not update uploads, so the name does not contain `.update.`. Remote stores cannot append in place.
+| Binding `path` | Writes | Destination |
+| --- | --- | --- |
+| `output.dataset` | One [dataset](#datasets) file of `options.kind` (`update` default, or `append` / `delete` / `source`) | `options.dataset` (a `Dataset`) or `options.directory` (+ optional `storePath`, `primary_key`, `format`). Required. |
+| `output.stream` | Scratch file `{uuidv7}{postfix}` (default `.csv.gz`) | Temp dir. With `options.directory` it becomes `output.dataset` kind `update`. |
+| `output.timeline` | Timeline entries, `{uuidv7}.timeline.{format}` (kind `append`) | Temp dir, or `options.directory`. |
+| `file` | — | `getFile(binding)` result is passed to the transform. |
+| `handlebars` | — | The shared handlebars instance. |
 
-The destination is `bindings.<name>.options.directory` when that is set. When it is omitted and `process` was given `filename`, the destination is that file's parent directory (`directoryFromFilename` — local paths and `s3://`, `r2://`, `gs://`, `gdrive://`). Packet input has no parent, so those outputs stay in the temp file unless `directory` is set.
+Every output binding value has `push(row)`; an invalid row throws inside the transform and the run aborts, discarding partial files. Dataset files with zero rows are not promoted (`filename: null`).
 
-`output.timeline` requires `person_id` and defaults `ts`. Timeline rows missing `id` get a uuidv7 when a destination directory is used. `output.stream` into a directory requires `metadata.json` there. If it is missing, the error includes a command: `engine9 putMetadata --directory='<directory>' --metadata='{"primary_key":"<column>","format":"csv.gz"}'`. The primary key on each update row is that file's `primary_key`.
+`output.timeline` requires `person_id` (0 is valid) and defaults `ts`. `options.entry_type` / `options.plugin_id` are applied as row defaults. A row without `id` gets a deterministic `getTimelineEntryUUID` when it carries `plugin_id`, `ts`, `person_id`, and an entry type; otherwise it gets a random uuidv7 only when written to a directory.
 
-See [Append tables](#append-tables) for how other libraries should pick `directory` and write updates.
+The destination is **never inferred** from the input file's parent — pass `directory` or `dataset`. Upserts (`update` / `delete`) require a declared primary key: `metadata.json` in the directory, or `primary_key` in the binding options. Missing both raises an error that includes `engine9 putMetadata --directory='<directory>' --metadata='{"primary_key":"<column>","format":"csv.gz"}'`.
+
+See [Datasets](#datasets) for choosing `directory` and reading the result.
 
 ---
 
-## Append tables
+## Datasets
 
-A table is one self-contained directory. There is no catalog database; metadata, sources, and updates all live together. This package is the portable contract for that directory — CLIs, plugins, and other libraries should depend on these helpers rather than inventing a parallel layout.
+A **Dataset** is one self-contained directory of **immutable** files read as one row set. It is deliberately not called a "table": everywhere else in engine9 and frakture, `table` / `options.table` means a warehouse (SQL) table. A Dataset is always a directory path. There is no catalog database; metadata, sources, updates, and deletes all live together. This package is the portable contract for that directory — CLIs, plugins, and other libraries should depend on `Dataset` rather than inventing a parallel layout.
 
 ```text
-<table-dir>/
-  metadata.json                 # optional
-  2024-01-base.csv.gz           # source (no .update. in the basename)
-  0199a0c5-....update.csv.gz    # update (MUST contain .update.)
+<dataset-dir>/
+  metadata.json                      # optional: primary_key, format, …
+  2024-01-base.csv.gz                # source  (no token) — full rows
+  0199a0c5-….append.jsonl.gz         # append  (.append. or .timeline.) — insert-only rows
+  0199a0c6-….update.csv.gz           # update  (.update.) — upsert by primary_key
+  0199a0c7-….delete.jsonl            # delete  (.delete.) — tombstones by primary_key
 ```
 
-Rule: The directory **is** the table. Pass that path around; do not reconstruct it from row contents.
+Rule: The directory **is** the Dataset. Pass that path around; do not reconstruct it from row contents.
 
-### Using from another library
-
-Typical writer (batch a source file, push rows, land an update file in the table directory):
+### `Dataset`
 
 ```javascript
-import {
-  ForEachEntry,
-  FileUtilities,
-  joinRemotePath,
-  loadTableMetadata
-} from '@engine9/input-tools';
+import { Dataset, FileUtilities } from '@engine9/input-tools';
 
 const files = new FileUtilities({ accountId });
-const directory = joinRemotePath(base, 'people'); // see "Choosing a directory"
-const meta = await loadTableMetadata(directory, files);
+const dataset = await Dataset.open(directory, { fileUtilities: files });
+// or: Dataset.open('acct/plugins/<pid>/person/ab12/<input_id>', { fileUtilities, storePath })
+// or: Dataset.open(directory, { fileUtilities, primary_key: 'person_id', format: 'jsonl.gz' })
 
-const foreach = new ForEachEntry({ accountId });
-const { outputFiles } = await foreach.process({
-  filename: sourceCsv,
-  bindings: {
-    out: {
-      path: 'output.stream',
-      options: {
-        directory,
-        format: meta.format,           // default csv.gz
-        primary_key: meta.primary_key  // default id
-      }
-    }
-  },
-  async transform({ batch, out }) {
-    for (const row of batch) {
-      out.push({ id: row.id, status: 'ok', 'x.y.z': 123 });
-    }
-  }
-});
-// outputFiles.out[0].filename is inside directory after promote
+dataset.primaryKey;          // metadata.json primary_key, or the open() override, default 'id'
+dataset.format;              // 'csv.gz' | 'csv' | 'jsonl.gz' | 'jsonl'
+dataset.keyed;               // true when upserts may be written
+await dataset.ensureMetadata();            // write metadata.json (primary_key, format) if absent
+await dataset.putMetadata({ input_id });   // merge extra fields
+
+// write
+const w = dataset.writer({ kind: 'update' });   // 'append' | 'delete' | 'source'
+w.push({ person_id: 1, status: 'ok', 'x.y.z': 123 });
+w.push({ person_id: 2, error: 'bad' });        // sparse rows are fine
+const { filename, records, promoted } = await w.end();   // local temp → moved into directory
+
+// read
+const files = await dataset.listFiles();       // [{ filename, name, kind, format, modifiedAt }] in apply order
+const rows = await dataset.toArray();          // merged rows
+const { stream, size, deleted } = await dataset.read({ kinds: ['source', 'update', 'delete'] });
+for await (const { row, file } of dataset.scan()) { /* raw rows in apply order */ }
 ```
 
-Omit `directory` when the files should sit next to the file you just read. `output.stream` and `output.timeline` can be used together. Timeline files are named `{uuid}.timeline.csv.gz`. An update file requires `metadata.json` in that directory, with `primary_key` set to the row identity column.
+Writers require a declared primary key for `update` / `delete` (`metadata.json` or `primary_key` passed to `open`). `DatasetWriter` can also be used without a directory for scratch files (`new DatasetWriter({ fileUtilities, kind: 'source', postfix: '.error.csv' })`).
+
+**CSV writers union the columns of every row** (two-pass through a local spool) and flatten nested objects to dotted keys, so a row pushed with `error` after rows without it still lands in the file. JSONL writers write rows as-is. Zero-row files are discarded, not promoted.
+
+### Merge rules (`Dataset.read` / `toArray`)
+
+1. Data files are applied ascending by the uuidv7 timestamp in the basename, else `modifiedAt`, else basename (`sortDatasetFiles`). Side files (`metadata.json`, `seen_records*`, locks, `.error.json`, `.idv1.parquet`) are skipped (`isDatasetSideFile`).
+2. `source` and `append` rows are inserted (and upsert if they repeat a key). Rows without a primary key are kept under a per-file synthetic key.
+3. `update` rows upsert by primary key. Keys **omitted** from the row leave prior values. In CSV update files an empty string also means "no change" (CSV cannot express absence); in JSONL `null` sets null. Update rows without a key are ignored.
+4. `delete` rows remove the key.
+5. Dotted keys set nested paths: existing `{ x: { y: { a: 'zxv' } } }` plus `x.y.z=123` yields `{ x: { y: { a: 'zxv', z: 123 } } }`. Nested objects (JSONL) deep-merge.
+6. Keys are compared as strings, so `1` (JSONL) and `"1"` (CSV) are the same row; the merged value keeps the type of the last writer.
+
+The merge is held in memory — this is the "light" reader for datasets of up to a few million rows. Engines (DuckDB, ClickHouse) can apply the same rules over `listFiles()` for larger datasets. Timeline appends keyed by `id` normally belong in their own Dataset; when they share a directory with a `person_id`-keyed Dataset, read with `kinds: ['source', 'update', 'delete']`.
+
+### Using from `ForEachEntry`
 
 ```javascript
+const dataset = await Dataset.open(directory, { fileUtilities: files });
+const foreach = new ForEachEntry({ accountId, fileUtilities: files });
 const { outputFiles } = await foreach.process({
-  filename: sourceCsv,
+  filename: sourceFile,                       // csv, csv.gz, jsonl, parquet, …
   bindings: {
-    updates: { path: 'output.stream' },
-    timeline: { path: 'output.timeline' }
+    results: { path: 'output.dataset', options: { dataset, kind: 'update' } },
+    timeline: { path: 'output.timeline', options: { directory: timelineDir, plugin_id } }
   },
-  async transform({ batch, updates, timeline }) {
+  async transform({ batch, results, timeline }) {
     for (const row of batch) {
-      updates.push({ id: row.id, status: 'ok' });
-      timeline.push({
-        person_id: row.person_id,
-        ts: row.ts,
-        entry_type_id: row.entry_type_id
-      });
+      results.push({ person_id: row.person_id, status: 'ok' });
+      timeline.push({ person_id: row.person_id, ts: row.ts, entry_type: 'EMAIL_SEND' });
     }
   }
 });
-// both files are in the parent directory of sourceCsv
 ```
-
-`output.timeline` requires `person_id` and defaults `ts`. Timeline rows missing `id` get a uuidv7. `output.stream` rows need the `primary_key` declared in `metadata.json`.
 
 Do this:
 
-- Write **local** then `move` into the directory (`ForEachEntry` does this; or call `promoteUpdateFiles` yourself). Object stores cannot append in place.
-- Put `.update.` in every update basename (`ensureUpdateFilename` / `updateFilePostfix`).
-- Include `metadata.json` `primary_key` on every update row. Extra fields (status, nested dotted keys) are allowed.
-- Use `joinRemotePath` for every path join. Node `path.join` collapses `gs://` / `s3://`.
-- Treat `loadTableMetadata` defaults as authoritative when `metadata.json` is absent.
+- Write **local** then `move` into the directory (`Dataset.writer` does this; or call `promoteUpdateFiles({ kind })` yourself). Object stores cannot append in place.
+- Stamp the kind token into every basename (`datasetPostfix` / `ensureKindFilename`).
+- Include the primary key on every `update` / `delete` row. Extra fields (status, nested dotted keys) are allowed.
+- Use `joinRemotePath` / `resolveDatasetDirectory` for every path join. Node `path.join` collapses `gs://` / `s3://`.
 
 Do not:
 
-- Stream-append to an `s3://`, `r2://`, or `gs://` key.
-- Mix side files (`metadata.json`, `seen_records*`, locks) into a reader’s data list — use `isTableSideFile`.
+- Stream-append to an `s3://`, `r2://`, or `gs://` key, or rewrite a promoted file.
+- Mix side files into a reader's data list — use `Dataset.listFiles()` or `isDatasetSideFile`.
 - Guess an engine9 input-store path when the host can give you a directory (see below).
-- Use `getTempDir` as a durable table. It is a daily scratch folder.
+- Use `getTempDir` as a durable Dataset. It is a daily scratch folder.
 
-Without `ForEachEntry`, write a local `{uuidv7}.update.csv.gz` (or jsonl), then:
-
-```javascript
-import { promoteUpdateFiles, ensureUpdateFilename } from '@engine9/input-tools';
-
-await promoteUpdateFiles({
-  fileWorker: files,
-  files: [{ filename: ensureUpdateFilename(localPath), records }],
-  directory
-});
-```
-
-Exported helpers: `loadTableMetadata`, `writeTableMetadata`, `directoryFromFilename`, `isUpdateFile`, `isTableSideFile`, `updateFilePostfix`, `ensureUpdateFilename`, `promoteUpdateFiles`, plus `DEFAULT_PRIMARY_KEY`, `DEFAULT_FORMAT`, `METADATA_FILENAME`.
+Lower-level helpers: `loadDatasetMetadata`, `writeDatasetMetadata`, `directoryFromFilename`, `resolveDatasetDirectory`, `datasetFileKind`, `isUpdateFile`, `isDeleteFile`, `isAppendFile`, `isDatasetSideFile`, `sortDatasetFiles`, `datasetPostfix`, `updateFilePostfix`, `ensureKindFilename`, `ensureUpdateFilename`, `promoteUpdateFiles`, plus `DEFAULT_PRIMARY_KEY`, `DEFAULT_FORMAT`, `METADATA_FILENAME`, `DATASET_KINDS`.
 
 ### Choosing a directory
 
-Pick **one** durable directory per table and reuse it. Resolution, in order:
+Pick **one** durable directory per Dataset and reuse it. Resolution, in order:
 
 | Situation | How to get `directory` |
 | --- | --- |
-| `ForEachEntry` is reading a file | Omit `options.directory`. The parent of `filename` is used. |
-| Host already has the table | Use that path as-is. Prefer this when the table directory is chosen separately from the input file. |
-| Relative path under a store root | `joinRemotePath(storePath, rel)` — the same join as an input store (`s3://`, `r2://`, `gs://`, `gdrive://`, or a local directory). Absolute paths and remote URIs are already directories; pass them through. `joinRemotePath` normalizes `gcs://` to `gs://`. |
+| Results belong next to the input file | `directoryFromFilename(filename)` — pass it explicitly; `ForEachEntry` no longer infers it. |
+| Host already has the Dataset | Use that path as-is. Prefer this when the Dataset directory is chosen separately from the input file. |
+| Relative path under a store root | `resolveDatasetDirectory(directory, { storePath })` — joins a relative path under the store root with `joinRemotePath` (`s3://`, `r2://`, `gs://`, `gdrive://`, or a local directory) and passes absolute paths and remote URIs through unchanged (`gcs://` normalized to `gs://`). Throws when a relative path is given without `storePath`. |
 | engine9 account worker | `await accountWorker.getStoreDirectory({ inputId })` (server). Honors `input.data_path` when set. **Not** in this package — input-tools has no `store_path` or SQL. |
 | Host cannot run the worker | Ask the host to pass `directory` (and optionally `input_id`). Do not invent `{store_path}/…` in a plugin if the host can resolve it. |
-| Standalone table (no warehouse input) | `joinRemotePath(base, …)` under a location **you** own. Examples: `joinRemotePath('/var/data', 'tables', 'people')` or `joinRemotePath('s3://bucket/app', accountId, 'people')`. |
+| Standalone Dataset (no warehouse input) | `joinRemotePath(base, …)` under a location **you** own. Examples: `joinRemotePath('/var/data', 'tables', 'people')` or `joinRemotePath('s3://bucket/app', accountId, 'people')`. |
 | Tests / one-off scratch | `await getTempDir({ accountId })` then a subfolder via `joinRemotePath`. Scratch is not a lake. |
 
-Optional: after you have `directory`, `await files.list({ directory })` (create it on first write if missing). Write `metadata.json` with `writeTableMetadata(directory, fields, files)` (merge by default; pass `{ merge: false }` to replace). Hosts that need key normalization (e.g. camelCase → snake_case) can pass `{ normalize }`.
+Optional: after you have `directory`, `await files.list({ directory })` (create it on first write if missing). Write `metadata.json` with `writeDatasetMetadata(directory, fields, files)` (merge by default; pass `{ merge: false }` to replace). Hosts that need key normalization (e.g. camelCase → snake_case) can pass `{ normalize }`.
 
 If you must compose an engine9-style input store without `getStoreDirectory`, the usual layout is:
 
@@ -279,36 +277,27 @@ joinRemotePath(storePath, accountId, 'plugins', pluginId, inputType, inputId.sli
 
 ### `metadata.json` (optional)
 
-When present, marks the directory as a table-style store. Extra fields pass through.
+When present, marks the directory as a Dataset. Extra fields pass through.
 
 | Field | Default / notes |
 | --- | --- |
-| `type` | `"table"` |
+| `type` | `"dataset"` (legacy `"table"` accepted) |
 | `description` | Human text |
 | `primary_key` | `"id"` |
 | `format` | Preferred extension for new update files, e.g. `csv.gz`, `jsonl.gz`, `parquet` |
 | `input_id` | Often set; not required |
 
-Absent metadata: treat the directory as a table with `primary_key: "id"` and `format: "csv.gz"`. `ForEachEntry` currently writes **csv** or **jsonl** (optionally gzipped), not parquet.
+Absent metadata: reads treat the directory as a Dataset with `primary_key: "id"` and `format: "csv.gz"`; upsert writes require a key (metadata or `primary_key` option). Writers produce **csv** or **jsonl** (optionally gzipped); readers also accept parquet and xlsx sources.
 
 ### Files
 
-- **Sources** — any input-tools-supported tabular files whose basename does **not** contain `.update.`.
-- **Updates** — basename contains `.update.` (e.g. `{uuidv7}.update.csv.gz`). Rows are keyed by `primary_key`. Update rows MAY add columns/fields that do not exist on the sources.
-- **Side files** — skip `metadata.json`, `seen_records*`, locks, sqlite sidecars, `.error.json`, `.idv1.parquet`.
+- **Sources** — any input-tools-supported tabular file whose basename has no kind token.
+- **Appends** — basename contains `.append.` or `.timeline.`; insert-only rows.
+- **Updates** — basename contains `.update.` (e.g. `{uuidv7}.update.csv.gz`). Rows are keyed by `primary_key` and MAY add columns/fields that do not exist on the sources.
+- **Deletes** — basename contains `.delete.`; only the `primary_key` column is needed.
+- **Side files** — `metadata.json`, `seen_records*`, locks, sqlite sidecars, `.error.json`, `.idv1.parquet` are never data.
 
-### Reading a table (contract — not implemented here)
-
-input-tools does **not** ship a merged reader. Server, DuckDB, or a future helper should:
-
-1. List data files (exclude side files). Optionally prefer `metadata.format` when filtering.
-2. Sort **ascending by date** by default: use the uuidv7 timestamp when the basename starts with a uuidv7 (`getUUIDTimestamp`), else file mtime, else lexicographic name.
-3. Stream each file in that order (`FileUtilities.fileToObjectStream` / `stream`). Upsert into a map keyed by `primary_key`.
-4. **Merge:** later files update the same key. Apply fields with **dotted notation** as the default for nested objects:
-   - Column/key `x.y.z` with value `123` sets `obj.x.y.z = 123` and must **not** wipe sibling `obj.x.y.a`.
-   - Example: existing `{ x: { y: { a: 'zxv' } } }` plus update `x.y.z=123` yields `{ x: { y: { a: 'zxv', z: 123 } } }`.
-   - Keys omitted from an update leave prior values. Explicit null/empty handling is implementation-defined for later readers.
-5. Final state per key is the merged object after the last file.
+Reading is implemented by `Dataset.read` (see [Merge rules](#merge-rules-datasetread--toarray)); engines that read the directory directly should follow the same rules.
 
 ---
 
@@ -421,5 +410,5 @@ The default export is an object containing all named exports above for `import i
 
 ## Related packages
 
-- **engine9 server** — workers bind `tools.relativeDate`, `tools.handlebars`, and `FileUtilities` for imports/exports. Account workers resolve input-store directories with `getStoreDirectory({ inputId })`; pass that path into append-table writers as `directory`.
+- **engine9 server** — workers bind `tools.relativeDate`, `tools.handlebars`, and `FileUtilities` for imports/exports. Account workers resolve input-store directories with `getStoreDirectory({ inputId })`; pass that path into Dataset writers as `directory`.
 - **Export definitions** — Handlebars merges in `server/utilities/exportDefinitionMerge.js`; use `{{date (or overrides.start "-30d")}}` in raw EQL conditions.

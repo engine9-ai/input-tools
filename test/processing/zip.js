@@ -1,8 +1,9 @@
 import nodetest from 'node:test';
 import assert from 'node:assert';
-import * as debug from 'debug';
+import debug$0 from 'debug';
 import { create, getManifest } from '../../index.js';
 const { describe, it } = nodetest;
+const debug = debug$0('test/zip');
 describe('Test Person Packet Creator', async () => {
   const pfile = './test/sample/message/5_fake_people.csv';
   it(`should create a zip file from directory ${process.cwd()} with path ${pfile}`, async () => {

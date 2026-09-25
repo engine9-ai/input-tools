@@ -1,6 +1,6 @@
 import nodetest from 'node:test';
 import assert from 'node:assert';
-import * as debug$0 from 'debug';
+import debug$0 from 'debug';
 import { FileUtilities } from '../index.js';
 const { it } = nodetest;
 const debug = debug$0('files');
