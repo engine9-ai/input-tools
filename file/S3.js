@@ -19,6 +19,14 @@ const {
 function Worker() {
   this.prefix = 's3';
 }
+
+// Default checksums (SDK >= 3.729) send each stream chunk as-is and reject any
+// chunk under 8KB that is not the last. Small local files fail immediately with
+// "An error was encountered in a non-retryable streaming request." Buffer to 64KB
+// so a short file is flushed once, as the final chunk. PutObject still needs ContentLength.
+export const s3UploadClientDefaults = {
+  requestStreamBufferSize: 64 * 1024
+};
 function getParts(filename) {
   if (!filename) throw new Error(`Invalid filename: ${filename}`);
   if (!filename.startsWith('r2://') && !filename.startsWith('s3://')) {
@@ -31,7 +39,9 @@ function getParts(filename) {
 }
 Worker.prototype.getClient = function () {
   if (!this.client) {
-    this.client = this.resolvedCredentials ? new S3Client(s3ClientConfig(this.resolvedCredentials)) : new S3Client({});
+    this.client = this.resolvedCredentials
+      ? new S3Client({ ...s3ClientConfig(this.resolvedCredentials), ...s3UploadClientDefaults })
+      : new S3Client({ ...s3UploadClientDefaults });
   }
   return this.client;
 };
@@ -158,17 +168,24 @@ Worker.prototype.put = async function (options) {
   const parts = directory.split('/');
   const Bucket = parts[2];
   const Key = parts.slice(3).filter(Boolean).concat(file).join('/');
+  const { size } = await fs.promises.stat(filename);
   const Body = fs.createReadStream(filename);
   const ContentType = mime.lookup(file);
-  debug(`Putting ${filename} to ${JSON.stringify({ Bucket, Key, ContentType })}}`);
+  debug(`Putting ${filename} to ${JSON.stringify({ Bucket, Key, ContentType, ContentLength: size })}`);
   const s3Client = this.getClient();
   const command = new PutObjectCommand({
     Bucket,
     Key,
     Body,
-    ContentType
+    ContentType,
+    ContentLength: size
   });
-  return s3Client.send(command);
+  try {
+    return await s3Client.send(command);
+  } catch (e) {
+    Body.destroy();
+    throw e;
+  }
 };
 Worker.prototype.put.metadata = {
   options: {

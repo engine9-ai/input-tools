@@ -1,6 +1,6 @@
 import util from "node:util";
 import clientS3 from "@aws-sdk/client-s3";
-import S3 from "./S3.js";
+import S3, { s3UploadClientDefaults } from "./S3.js";
 import { r2ClientConfig } from "./credentials.js";
 const { S3Client, } = clientS3;
 function R2(worker) {
@@ -11,7 +11,7 @@ util.inherits(R2, S3);
 R2.prototype.getClient = function () {
     if (!this.client) {
         if (this.resolvedCredentials) {
-            this.client = new S3Client(r2ClientConfig(this.resolvedCredentials));
+            this.client = new S3Client({ ...r2ClientConfig(this.resolvedCredentials), ...s3UploadClientDefaults });
         } else {
             const missing = ['CLOUDFLARE_R2_ACCOUNT_ID', 'CLOUDFLARE_R2_ACCESS_KEY_ID', 'CLOUDFLARE_R2_SECRET_ACCESS_KEY']
                 .filter((r) => !process.env[r]);
@@ -29,6 +29,7 @@ R2.prototype.getClient = function () {
                     secretAccessKey: SECRET_ACCESS_KEY,
                 },
                 forcePathStyle: true, // Important for R2 compatibility
+                ...s3UploadClientDefaults
             });
         }
     }
