@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",
-    "@google-cloud/storage": "^7.22.0",
+    "@google-cloud/storage": "^8.2.0",
     "archiver": "^7.0.1",
     "async-mutex": "^0.5.0",
     "csv": "^6.3.11",
