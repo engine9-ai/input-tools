@@ -1110,6 +1110,95 @@ Worker.prototype.remove.metadata = {
     filename: {}
   }
 };
+
+function removeItemFilename(item) {
+  if (typeof item !== 'object' || item == null) return null;
+  const name = item.filename ?? item.id_filename ?? item.idFilename;
+  if (typeof name !== 'string') return null;
+  const trimmed = name.trim();
+  return trimmed || null;
+}
+
+function addRemoveFilenames(names, value) {
+  if (value == null || value === '') return;
+  if (Array.isArray(value)) {
+    for (const item of value) addRemoveFilenames(names, item);
+    return;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      addRemoveFilenames(names, JSON5.parse(trimmed));
+      return;
+    }
+    for (const part of getStringArray(trimmed)) names.push(part);
+    return;
+  }
+  if (typeof value === 'object') {
+    if (bool(value.no_data ?? value.noData, false)) return;
+    const name = removeItemFilename(value);
+    if (name) names.push(name);
+  }
+}
+
+function collectRemoveFilenames(options) {
+  const names = [];
+  addRemoveFilenames(names, options.file_array ?? options.fileArray);
+  addRemoveFilenames(names, options.filenames);
+  addRemoveFilenames(names, options.filename);
+  return [...new Set(names)];
+}
+
+Worker.prototype.removeFiles = async function (opts = {}) {
+  let options = { ...opts };
+  const optionsFilename = options.options_filename ?? options.optionsFilename;
+  if (optionsFilename) {
+    const loaded = await this.json({ filename: optionsFilename });
+    if (Array.isArray(loaded)) {
+      options = { ...opts, file_array: loaded };
+    } else if (loaded && typeof loaded === 'object') {
+      options = { ...opts, ...loaded };
+    } else {
+      throw new Error(`options_filename ${optionsFilename} did not contain file options`);
+    }
+  }
+  if (bool(options.no_data ?? options.noData, false)) {
+    return { removed: [], records: 0, no_data: true };
+  }
+  const filenames = collectRemoveFilenames(options);
+  if (!filenames.length) {
+    throw new Error('removeFiles requires filename, filenames, file_array, or options_filename');
+  }
+  const pLimit = await import('p-limit');
+  const limitedMethod = pLimit.default(10);
+  const removed = await Promise.all(
+    filenames.map((filename) =>
+      limitedMethod(async () => {
+        const result = await this.remove({ filename });
+        return result.removed || filename;
+      })
+    )
+  );
+  return { removed, records: removed.length };
+};
+Worker.prototype.removeFiles.metadata = {
+  options: {
+    filename: { description: 'One file to remove' },
+    filenames: { description: 'Comma-delimited list of file paths, or an array of paths' },
+    file_array: {
+      description:
+        'Array of filename strings or { filename } objects, same shape as idFiles / loadTableFromFiles. A JSON string is accepted.'
+    },
+    fileArray: { deprecated: true },
+    options_filename: {
+      description:
+        'JSON file of options when the list is large. The file may contain filename, filenames, or file_array.'
+    },
+    optionsFilename: { deprecated: true },
+    no_data: { description: 'When true at top level or on a file_array item, skip that file' }
+  }
+};
 Worker.prototype.move = async function ({ filename, target, remove = true }) {
   if (!target) throw new Error('target is required');
   if (typeof target !== 'string') throw new Error(`target isn't a string:${JSON.stringify(target)}`);
