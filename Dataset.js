@@ -20,6 +20,11 @@
  *
  * Writers: CSV output unions the columns of every row (two-pass through a local spool), and
  * flattens nested objects to dotted keys so writer and reader agree. JSONL writes rows as-is.
+ *
+ * `Dataset.batchUnprocessed(directory)` reads that merged view and writes one CSV of primary
+ * keys that have not been batched yet. The key is the dataset primary key: `metadata.json`,
+ * an open() override, or `id`. The ledger and the file live in `{directory}/batched`, which
+ * `listFiles` does not scan, so a batch file is not merged back in as another source.
  */
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -28,8 +33,10 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { stringify } from 'csv';
 import debug$0 from 'debug';
+import JSON5 from 'json5';
 import FileUtilities from './file/FileUtilities.js';
-import { CSV_STRINGIFY_OPTIONS, getTempFilename, joinRemotePath, normalizeRemoteUri } from './file/tools.js';
+import { bool, CSV_STRINGIFY_OPTIONS, getTempFilename, joinRemotePath, normalizeRemoteUri } from './file/tools.js';
+import { writeUniqueRecords } from './writeUniqueRecords.js';
 import {
   DEFAULT_FORMAT,
   DEFAULT_PRIMARY_KEY,
@@ -347,6 +354,70 @@ export class DatasetWriter {
   }
 }
 
+const LEDGER_DIRNAME = 'batched';
+
+function parseFieldList(value) {
+  if (value == null || value === '') return [];
+  if (Array.isArray(value)) return value.flatMap((entry) => parseFieldList(entry));
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) return parseFieldList(JSON5.parse(trimmed));
+    return trimmed
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+/**
+ * `columns` is a keep-list (array or comma string) or a header→source map.
+ * Returns null when every merged field should pass through.
+ */
+function parseBatchColumns(columns) {
+  if (columns == null || columns === '') return null;
+  let value = columns;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) value = JSON5.parse(trimmed);
+    else {
+      return trimmed
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((name) => ({ header: name, source: name }));
+    }
+  }
+  if (Array.isArray(value)) {
+    return value.map((name) => ({ header: String(name), source: String(name) }));
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value).map(([header, source]) => ({
+      header,
+      source: source == null || source === '' ? header : String(source)
+    }));
+  }
+  throw new Error('batchUnprocessed columns must be a list or a header map');
+}
+
+function projectRow(row, columns) {
+  if (!columns) return { ...(row || {}) };
+  const out = {};
+  for (const { header, source } of columns) {
+    const value = row?.[source];
+    out[header] = value == null ? '' : value;
+  }
+  return out;
+}
+
+function uniqueMaterial(row, fields) {
+  const parts = fields.map((field) => (row?.[field] == null ? '' : String(row[field]).trim()));
+  if (parts.every((part) => part === '')) return '';
+  return parts.join('\u001f');
+}
+
 export default class Dataset {
   constructor({ directory, fileUtilities, accountId, metadata, primaryKey, format } = {}) {
     if (!directory) throw new Error('Dataset requires directory');
@@ -531,5 +602,95 @@ export default class Dataset {
       validate,
       prepare
     });
+  }
+
+  /**
+   * Write one CSV of merged rows whose primary key has not been batched yet.
+   * The key is this dataset's primary key (`metadata.json`, then `id`).
+   * `primary_key` overrides it for this call. `unique_fields` names output columns
+   * to ledger instead, when the file's identity is not the dataset key.
+   * Blank keys are skipped. No new keys returns `no_data`.
+   *
+   * `Dataset.batchUnprocessed(directory)` opens that directory and runs this.
+   */
+  static async batchUnprocessed(directory, options = {}) {
+    if (directory && typeof directory === 'object') {
+      options = directory;
+      directory = options.directory;
+    }
+    if (!directory || typeof directory !== 'string' || !String(directory).trim()) {
+      throw new Error('Dataset.batchUnprocessed requires a directory');
+    }
+    const dataset = await Dataset.open(String(directory).trim(), {
+      fileUtilities: options.fileUtilities,
+      accountId: options.accountId,
+      storePath: options.storePath,
+      primary_key: options.primary_key || options.primaryKey,
+      format: options.format
+    });
+    return dataset.batchUnprocessed(options);
+  }
+
+  async batchUnprocessed(options = {}) {
+    if (bool(options.no_data, false)) {
+      return { no_data: true, records: 0, seen: 0, directory: this.directory, file_array: [] };
+    }
+    const previousKey = this.explicitPrimaryKey;
+    const requestedKey =
+      options.primary_key != null && String(options.primary_key).trim() !== '' ? String(options.primary_key).trim() : '';
+    if (requestedKey) this.explicitPrimaryKey = requestedKey;
+    try {
+      const columns = parseBatchColumns(options.columns);
+      const uniqueFields = parseFieldList(options.unique_fields);
+      const keyFields = uniqueFields.length ? uniqueFields : [this.primaryKey];
+      if (columns) {
+        const headers = new Set(columns.map((column) => column.header));
+        const missing = keyFields.filter((field) => !headers.has(field));
+        if (missing.length) {
+          throw new Error(`batchUnprocessed unique fields must be included in columns: ${missing.join(', ')}`);
+        }
+      }
+      const { rows, files } = await this.merge();
+      const ledgerDirectory = options.ledger_directory || joinRemotePath(this.directory, LEDGER_DIRNAME);
+      const sourceFiles = files.map((file) => file.name);
+      if (!sourceFiles.length) {
+        return {
+          no_data: true,
+          records: 0,
+          seen: 0,
+          directory: this.directory,
+          ledger_directory: ledgerDirectory,
+          source_files: [],
+          file_array: []
+        };
+      }
+      const projected = [];
+      for (const row of rows.values()) {
+        const next = projectRow(row, columns);
+        if (!uniqueMaterial(next, keyFields)) continue;
+        projected.push(next);
+      }
+      const result = await writeUniqueRecords(this.fileUtilities, {
+        directory: ledgerDirectory,
+        stream: Readable.from(projected),
+        target_format: 'csv',
+        gzip: false,
+        file_extended_type: options.file_extended_type || 'batch',
+        unique_function: (row) => uniqueMaterial(row, keyFields)
+      });
+      const written = (result.file_array || []).find((entry) => entry.filename && entry.records > 0);
+      return {
+        directory: this.directory,
+        ledger_directory: ledgerDirectory,
+        source_files: sourceFiles,
+        filename: written?.filename || null,
+        records: result.records || 0,
+        seen: result.seen || 0,
+        no_data: !written,
+        file_array: result.file_array || []
+      };
+    } finally {
+      this.explicitPrimaryKey = previousKey;
+    }
   }
 }
