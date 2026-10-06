@@ -23,7 +23,8 @@
  *
  * `Dataset.batchUnprocessed(directory)` reads that merged view and writes one CSV of primary
  * keys that have not been batched yet. The key is the dataset primary key: `metadata.json`,
- * an open() override, or `id`. The ledger and the file live in `{directory}/batched`, which
+ * an open() override, or `id`. The return includes `samples` (up to 10 written rows).
+ * The ledger and the file live in `{directory}/batched`, which
  * `listFiles` does not scan, so a batch file is not merged back in as another source.
  */
 import fs from 'node:fs';
@@ -610,6 +611,7 @@ export default class Dataset {
    * `primary_key` overrides it for this call. `unique_fields` names output columns
    * to ledger instead, when the file's identity is not the dataset key.
    * Blank keys are skipped. No new keys returns `no_data`.
+   * `samples` is up to 10 of the rows written this call, or `[]` when nothing was written.
    *
    * `Dataset.batchUnprocessed(directory)` opens that directory and runs this.
    */
@@ -633,7 +635,7 @@ export default class Dataset {
 
   async batchUnprocessed(options = {}) {
     if (bool(options.no_data, false)) {
-      return { no_data: true, records: 0, seen: 0, directory: this.directory, file_array: [] };
+      return { no_data: true, records: 0, seen: 0, directory: this.directory, file_array: [], samples: [] };
     }
     const previousKey = this.explicitPrimaryKey;
     const requestedKey =
@@ -661,7 +663,8 @@ export default class Dataset {
           directory: this.directory,
           ledger_directory: ledgerDirectory,
           source_files: [],
-          file_array: []
+          file_array: [],
+          samples: []
         };
       }
       const projected = [];
@@ -687,7 +690,8 @@ export default class Dataset {
         records: result.records || 0,
         seen: result.seen || 0,
         no_data: !written,
-        file_array: result.file_array || []
+        file_array: result.file_array || [],
+        samples: result.samples || []
       };
     } finally {
       this.explicitPrimaryKey = previousKey;

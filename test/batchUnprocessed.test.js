@@ -36,6 +36,9 @@ describe('Dataset.batchUnprocessed', () => {
     });
     assert.equal(first.no_data, false);
     assert.equal(first.records, 1);
+    assert.equal(first.samples.length, 1);
+    assert.equal(first.samples[0].email, 'a@example.com');
+    assert.equal(first.samples[0]['Dev Recent Donors'], 'y');
     assert.match(first.filename, /\.csv$/);
     const firstText = await fsp.readFile(first.filename, 'utf8');
     assert.match(firstText, /email,Dev Recent Donors/);
@@ -50,6 +53,7 @@ describe('Dataset.batchUnprocessed', () => {
     assert.equal(second.no_data, true);
     assert.equal(second.records, 0);
     assert.equal(second.filename, null);
+    assert.deepEqual(second.samples, []);
 
     await writeCsv('two.export.csv', 'email,Dev Recent Donors,export_id', ['b@example.com,y,4']);
     const third = await Dataset.batchUnprocessed(directory, {
@@ -59,6 +63,8 @@ describe('Dataset.batchUnprocessed', () => {
     });
     assert.equal(third.no_data, false);
     assert.equal(third.records, 1);
+    assert.equal(third.samples.length, 1);
+    assert.equal(third.samples[0].email, 'b@example.com');
     const thirdText = await fsp.readFile(third.filename, 'utf8');
     assert.match(thirdText, /b@example.com,y/);
     assert.equal(thirdText.includes('a@example.com'), false);
@@ -79,11 +85,32 @@ describe('Dataset.batchUnprocessed', () => {
         columns: 'email,flag'
       });
       assert.equal(result.records, 1);
+      assert.deepEqual(result.samples, [{ email: 'a@example.com', flag: 'y' }]);
       const text = await fsp.readFile(result.filename, 'utf8');
       assert.match(text, /a@example.com,y/);
       assert.equal(text.includes('b@example.com'), false);
     } finally {
       await fsp.rm(mergedDir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns at most 10 samples of the rows written', async () => {
+    const sampleDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'e9-batch-samples-'));
+    try {
+      const rows = [];
+      for (let i = 0; i < 12; i += 1) rows.push(`p${i}@example.com,y`);
+      await fsp.writeFile(path.join(sampleDir, 'people.csv'), `email,flag\n${rows.join('\n')}\n`);
+      const result = await Dataset.batchUnprocessed(sampleDir, {
+        fileUtilities: files,
+        primary_key: 'email',
+        columns: 'email,flag'
+      });
+      assert.equal(result.records, 12);
+      assert.equal(result.samples.length, 10);
+      assert.equal(result.samples[0].email, 'p0@example.com');
+      assert.equal(result.samples[9].email, 'p9@example.com');
+    } finally {
+      await fsp.rm(sampleDir, { recursive: true, force: true });
     }
   });
 
@@ -94,6 +121,7 @@ describe('Dataset.batchUnprocessed', () => {
     });
     assert.equal(skipped.no_data, true);
     assert.equal(skipped.records, 0);
+    assert.deepEqual(skipped.samples, []);
     const skippedString = await Dataset.batchUnprocessed({
       directory,
       fileUtilities: files,
@@ -112,6 +140,9 @@ describe('Dataset.batchUnprocessed', () => {
       );
       const byId = await Dataset.batchUnprocessed(idDir, { fileUtilities: files, columns: 'id,email' });
       assert.equal(byId.records, 2);
+      assert.equal(byId.samples.length, 2);
+      assert.equal(byId.samples[0].id, '1');
+      assert.equal(byId.samples[1].email, 'a@example.com');
       const text = await fsp.readFile(byId.filename, 'utf8');
       assert.match(text, /^id,/);
       assert.match(text, /1,a@example.com/);
@@ -119,11 +150,13 @@ describe('Dataset.batchUnprocessed', () => {
       assert.equal(text.includes('blank@example.com'), false);
       const again = await Dataset.batchUnprocessed(idDir, { fileUtilities: files, columns: 'id,email' });
       assert.equal(again.no_data, true);
+      assert.deepEqual(again.samples, []);
 
       await fsp.writeFile(path.join(metaDir, 'metadata.json'), JSON.stringify({ primary_key: 'email' }));
       await fsp.writeFile(path.join(metaDir, 'people.csv'), 'email,flag\na@example.com,y\na@example.com,y\n');
       const byMeta = await Dataset.batchUnprocessed(metaDir, { fileUtilities: files, columns: 'email,flag' });
       assert.equal(byMeta.records, 1);
+      assert.deepEqual(byMeta.samples, [{ email: 'a@example.com', flag: 'y' }]);
       const metaText = await fsp.readFile(byMeta.filename, 'utf8');
       assert.match(metaText, /a@example.com,y/);
     } finally {

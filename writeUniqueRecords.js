@@ -33,6 +33,7 @@ export const SEEN_RECORDS_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 export const SEEN_RECORDS_LOCK_STALE_MS = 30 * 60 * 1000;
 
 const DEFAULT_EXCLUDE = ['export_id'];
+const WRITTEN_SAMPLE_LIMIT = 10;
 const INDEX_FILES = new Set([
   SEEN_RECORDS_FILENAME,
   SEEN_RECORDS_LOCK_FILENAME,
@@ -297,7 +298,7 @@ export async function writeUniqueRecords(fileWorker, opts = {}) {
     options = { ...opts, ...loaded };
   }
   if (bool(options.no_data, false)) {
-    return { ...options, no_data: true, records: 0, seen: 0, file_array: [] };
+    return { ...options, no_data: true, records: 0, seen: 0, file_array: [], samples: [] };
   }
   const { directory } = options;
   if (!directory) throw new Error('writeUniqueRecords requires directory');
@@ -310,10 +311,11 @@ export async function writeUniqueRecords(fileWorker, opts = {}) {
   arr = arr.map((o) => (typeof o === 'string' ? { filename: o } : o)).filter((o) => !bool(o.no_data, false));
   const seenPath = joinRemotePath(directory, SEEN_RECORDS_FILENAME);
   if (arr.length === 0) {
-    return { directory, seen_file: seenPath, no_data: true, records: 0, seen: 0, file_array: [] };
+    return { directory, seen_file: seenPath, no_data: true, records: 0, seen: 0, file_array: [], samples: [] };
   }
   return withUniqueRecords(fileWorker, options, async (session) => {
     const output = [];
+    const samples = [];
     let fileCounter = 0;
     for (const item of arr) {
       const filename = item.filename || options.filename;
@@ -335,6 +337,7 @@ export async function writeUniqueRecords(fileWorker, opts = {}) {
       });
       let seenCount = 0;
       const toCommit = [];
+      const fileSamples = [];
       const filter = new Transform({
         objectMode: true,
         transform(row, enc, cb) {
@@ -344,7 +347,10 @@ export async function writeUniqueRecords(fileWorker, opts = {}) {
             const classified = session.classify(rows);
             seenCount += classified.seen.length;
             toCommit.push(...classified.fingerprints);
-            for (const rec of classified.unseen) this.push(rec);
+            for (const rec of classified.unseen) {
+              if (fileSamples.length < WRITTEN_SAMPLE_LIMIT) fileSamples.push(rec);
+              this.push(rec);
+            }
             cb();
           } catch (e) {
             cb(e);
@@ -374,6 +380,10 @@ export async function writeUniqueRecords(fileWorker, opts = {}) {
       });
       session.commit(toCommit);
       output.push({ source_filename: filename || null, filename: moved.filename, records, seen: seenCount });
+      for (const rec of fileSamples) {
+        if (samples.length >= WRITTEN_SAMPLE_LIMIT) break;
+        samples.push(rec);
+      }
     }
     const records = output.reduce((a, b) => a + b.records, 0);
     const seen = output.reduce((a, b) => a + b.seen, 0);
@@ -383,6 +393,7 @@ export async function writeUniqueRecords(fileWorker, opts = {}) {
       file_array: output,
       records,
       seen,
+      samples,
       no_data: records === 0
     };
   });
@@ -390,7 +401,7 @@ export async function writeUniqueRecords(fileWorker, opts = {}) {
 
 writeUniqueRecords.metadata = {
   description:
-    'Write previously unseen records (content hash by default) from one or many files into directory. Lookup is directory/seen_records.txt. Hashes commit only after a successful write.',
+    'Write previously unseen records (content hash by default) from one or many files into directory. Lookup is directory/seen_records.txt. Hashes commit only after a successful write. Returns samples of up to 10 written rows.',
   options: {
     directory: {
       required: true,

@@ -74,6 +74,9 @@ describe('writeUniqueRecords', async () => {
     });
     assert.equal(first.records, 2);
     assert.equal(first.seen, 1);
+    assert.equal(first.samples.length, 2);
+    assert.equal(first.samples[0].id, '1');
+    assert.equal(first.samples[1].name, 'Two');
     assert.ok(first.file_array[0].filename.startsWith(directory));
     assert.equal(path.basename(first.seen_file), SEEN_RECORDS_FILENAME);
     const seenLines = (await fsp.readFile(first.seen_file, 'utf8')).trim().split('\n');
@@ -90,6 +93,7 @@ describe('writeUniqueRecords', async () => {
     assert.equal(second.records, 0);
     assert.equal(second.seen, 3);
     assert.equal(second.no_data, true);
+    assert.deepEqual(second.samples, []);
     assert.equal(second.file_array[0].filename, null);
   });
 
