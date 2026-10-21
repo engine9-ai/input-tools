@@ -74,6 +74,28 @@ const EXPORT_FOR_MESSAGING = 82;
 const INFERRED_ENTRY = 91;
 const INFERRED_MESSAGE = 92;
 const INFERRED_FORM = 93;
+// Gauge (@engine9/core-gauge) owns 100-129: measurement of web and app activity.
+// No platform prefix; platform is a column. Custom entries are CUSTOM_ENTRY plus a name.
+// A new gauge session began
+const SESSION_START = 100;
+// First time a device was seen (first_visit / first_open)
+const FIRST_VISIT = 101;
+const PAGE_VIEW = 102;
+const SCREEN_VIEW = 103;
+const ENGAGEMENT = 104;
+const APP_UPDATE = 105;
+const LOGIN = 106;
+const LOGOUT = 107;
+// A device was linked to a person
+const IDENTIFY = 108;
+const SEARCH = 109;
+const OUTBOUND_CLICK = 110;
+const FILE_DOWNLOAD = 111;
+const FORM_START = 112;
+const VIDEO_START = 113;
+const VIDEO_COMPLETE = 114;
+const SHARE = 115;
+const CUSTOM_ENTRY = 129;
 // DO. NOT. CHANGE. (once finalized)
 // should probably have offsets between types
 // ie email, transaction, etc.
@@ -135,7 +157,24 @@ const TIMELINE_ENTRY_TYPES = {
   EXPORT_FOR_MESSAGING,
   INFERRED_ENTRY,
   INFERRED_MESSAGE,
-  INFERRED_FORM
+  INFERRED_FORM,
+  SESSION_START,
+  FIRST_VISIT,
+  PAGE_VIEW,
+  SCREEN_VIEW,
+  ENGAGEMENT,
+  APP_UPDATE,
+  LOGIN,
+  LOGOUT,
+  IDENTIFY,
+  SEARCH,
+  OUTBOUND_CLICK,
+  FILE_DOWNLOAD,
+  FORM_START,
+  VIDEO_START,
+  VIDEO_COMPLETE,
+  SHARE,
+  CUSTOM_ENTRY
 };
 Object.entries(TIMELINE_ENTRY_TYPES).forEach(([k, v]) => {
   TIMELINE_ENTRY_TYPES[v] = k;

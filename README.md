@@ -348,6 +348,8 @@ See [Input packets](#input-packets-zip).
 
 Map of entry type name → numeric `entry_type_id` (e.g. `EMAIL_SEND`, `TRANSACTION`, `CRM_ORIGIN`). Re-exported from `timelineTypes.js`.
 
+Ids 100–129 belong to web and app measurement ([`@engine9/core-gauge`](https://www.npmjs.com/package/@engine9/core-gauge)): `SESSION_START`, `FIRST_VISIT`, `PAGE_VIEW`, `SCREEN_VIEW`, `LOGIN`, `LOGOUT`, `IDENTIFY`, `SEARCH`, `OUTBOUND_CLICK`, `FILE_DOWNLOAD`, `FORM_START`, `VIDEO_START`, `VIDEO_COMPLETE`, `SHARE`, `ENGAGEMENT`, `APP_UPDATE`, and `CUSTOM_ENTRY` (129, a named custom entry). Ids never change once published.
+
 ### `getEntryTypeId(o, { defaults })` / `getEntryType(o, defaults)`
 
 Resolve `entry_type_id` ↔ `entry_type` label on a row object.
