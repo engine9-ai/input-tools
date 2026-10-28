@@ -3,6 +3,7 @@
  * Kept separate from index.js so stream tooling (ForEachEntry, Table) can import them
  * without a circular import.
  */
+import { Buffer } from 'node:buffer';
 import debug$0 from 'debug';
 import { v4 as uuidv4, v5 as uuidv5, v7 as uuidv7, validate as uuidIsValid } from 'uuid';
 import { TIMELINE_ENTRY_TYPES } from './timelineTypes.js';

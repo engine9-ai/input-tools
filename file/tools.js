@@ -6,9 +6,9 @@ import { mkdirp } from 'mkdirp';
 import nodestream from 'node:stream';
 import JSON5 from 'json5';
 import unzipper from 'unzipper';
-import dayjs from 'dayjs';
 import clientS3 from '@aws-sdk/client-s3';
 import { v7 as uuidv7 } from 'uuid';
+import { bool, getStringArray, isValidDate, relativeDate } from '../values.js';
 
 const fsp = fs.promises;
 const debug = debug$0('@engine9/input-tools');
@@ -200,95 +200,6 @@ async function downloadFile({ packet, type = 'person' }) {
         resolve({ filename });
       });
   });
-}
-function isValidDate(d) {
-  // we WANT to use isNaN, not the Number.isNaN -- we're checking the date type
-  return d instanceof Date && !isNaN(d);
-}
-function bool(x, _defaultVal) {
-  const defaultVal = _defaultVal === undefined ? false : _defaultVal;
-  if (x === undefined || x === null || x === '') return defaultVal;
-  if (typeof x !== 'string') return !!x;
-  if (x === '1') return true; // 0 will return false, but '1' is true
-  const y = x.toLowerCase();
-  return !!(y.indexOf('y') + 1) || !!(y.indexOf('t') + 1);
-}
-function getStringArray(s, nonZeroLength) {
-  let a = s || [];
-  if (typeof a === 'number') a = String(a);
-  if (typeof a === 'string') a = [a];
-  if (typeof s === 'string') a = s.split(',');
-  a = a.map((x) => x.toString().trim()).filter(Boolean);
-  if (nonZeroLength && a.length === 0) a = [0];
-  return a;
-}
-function relativeDate(s, _initialDate) {
-  let initialDate = _initialDate;
-  if (!s || s === 'none') return null;
-  if (typeof s.getMonth === 'function') return s;
-  // We actually want a double equals here to test strings as well
-  if (parseInt(s, 10) == s) {
-    const r = new Date(parseInt(s, 10));
-    if (!isValidDate(r)) throw new Error(`Invalid integer date:${s}`);
-    return r;
-  }
-  if (initialDate) {
-    initialDate = new Date(initialDate);
-  } else {
-    initialDate = new Date();
-  }
-  let r = s.match(/^([+-]{1})([0-9]+)([YyMwdhms]{1})([.a-z]*)$/);
-  if (r) {
-    let period = null;
-    switch (r[3]) {
-      case 'Y':
-      case 'y':
-        period = 'years';
-        break;
-      case 'M':
-        period = 'months';
-        break;
-      case 'w':
-        period = 'weeks';
-        break;
-      case 'd':
-        period = 'days';
-        break;
-      case 'h':
-        period = 'hours';
-        break;
-      case 'm':
-        period = 'minutes';
-        break;
-      case 's':
-        period = 'seconds';
-        break;
-      default:
-        period = 'minutes';
-        break;
-    }
-    let d = dayjs(initialDate);
-    if (r[1] === '+') {
-      d = d.add(parseInt(r[2], 10), period);
-    } else {
-      d = d.subtract(parseInt(r[2], 10), period);
-    }
-    if (!isValidDate(d.toDate())) throw new Error(`Invalid date configuration:${r}`);
-    if (r[4]) {
-      const opts = r[4].split('.').filter(Boolean);
-      if (opts[0] === 'start') d = d.startOf(opts[1] || 'day');
-      else if (opts[0] === 'end') d = d.endOf(opts[1] || 'day');
-      else throw new Error(`Invalid relative date,unknown options:${r[4]}`);
-    }
-    return d.toDate();
-  }
-  if (s === 'now') {
-    r = dayjs(new Date()).toDate();
-    return r;
-  }
-  r = dayjs(new Date(s)).toDate();
-  if (!isValidDate(r)) throw new Error(`Invalid Date: ${s}`);
-  return r;
 }
 /*
   When comparing two objects, some may come from a file (thus strings), and some from

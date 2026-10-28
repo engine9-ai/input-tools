@@ -20,6 +20,13 @@ import {
 
 This package stays **portable across environments**. It should not depend on server-only storage layout, optional analytics engines, or products that not every consumer installs. For example, **DuckDB** paths and related defaults live in the engine9 **server** (or your app), not here.
 
+It is also the one home of the small helpers every engine9 package shares: the value helpers in `values.js` and the id helpers in `uuidTools.js`. `@engine9/core` re-exports them from `@engine9/core/utilities` and does not keep its own copies. Add a shared helper here, not to core or the server. Both files are safe to deep-import in a Cloudflare Worker, where the package root (which pulls in cloud SDKs) is not:
+
+```javascript
+import { parseJSONValue, stableStringify } from '@engine9/input-tools/values.js';
+import { getTimelineEntryUUID } from '@engine9/input-tools/uuidTools.js';
+```
+
 ---
 
 ## Handlebars
@@ -379,6 +386,9 @@ Deterministic timeline row UUID from `remote_entry_uuid`, `remote_entry_id`, or 
 | ------ | ------- |
 | `bool(x, defaultVal?)` | Parse booleans from strings (`y`, `t`, `1`, etc.) |
 | `getStringArray(s, nonZeroLength?)` | Normalize string / number / array to string array |
+| `parseJSONValue(value, fallback?)` | A JSON column's value as an object: parses text (SQLite, D1), passes objects through (MySQL), `fallback` for blank or bad text |
+| `stableStringify(value)` | JSON with sorted keys, for comparing and hashing |
+| `chunkArray(array, size)` | Split an array into batches |
 | `parseJSON5(o, defaultVal?)` | Parse JSON5 string or pass through objects |
 | `makeStrings(o)` | Shallow-copy object with all values stringified |
 
@@ -414,3 +424,7 @@ The default export is an object containing all named exports above for `import i
 
 - **engine9 server** — workers bind `tools.relativeDate`, `tools.handlebars`, and `FileUtilities` for imports/exports. Account workers resolve input-store directories with `getStoreDirectory({ inputId })`; pass that path into Dataset writers as `directory`.
 - **Export definitions** — Handlebars merges in `server/utilities/exportDefinitionMerge.js`; use `{{date (or overrides.start "-30d")}}` in raw EQL conditions.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

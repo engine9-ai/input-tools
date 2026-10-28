@@ -1,6 +1,6 @@
 {
   "name": "@engine9/input-tools",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "type": "module",
   "description": "Cross-environment utilities for Engine9-style inputs (no server-only or optional-engine coupling; e.g. DuckDB paths belong in the server app)",
   "main": "index.js",
@@ -12,7 +12,7 @@
     "node": ">=18"
   },
   "author": "Engine9",
-  "license": "GPL-3.0-or-later",
+  "license": "MIT",
   "devDependencies": {
     "eslint": "^9.39.2"
   },

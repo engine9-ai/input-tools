@@ -24,6 +24,7 @@ import {
   canComputeTimelineEntryUUID
 } from './uuidTools.js';
 import { checkUnicode, collectInvalidUnicodeValues, cleanUnicodeValues } from './checkUnicode.js';
+import { ObjectError, chunkArray, parseJSONValue, stableStringify } from './values.js';
 import { keyFromFields, mergeIntoQueue } from './mergeIntoQueue.js';
 import {
   contentFingerprint,
@@ -346,22 +347,6 @@ function getDateRangeArray(startDate, endDate) {
   }
   return result;
 }
-class ObjectError extends Error {
-  constructor(data) {
-    if (typeof data === 'string') {
-      // normal behavior
-      super(data);
-    } else if (typeof data === 'object') {
-      super(data.message);
-      Object.keys(data).forEach((k) => {
-        this[k] = data[k];
-      });
-      this.status = data.status;
-    } else {
-      super('(No error message)');
-    }
-  }
-}
 export { appendFileStatus };
 export { bool };
 export { checkUnicode };
@@ -403,6 +388,9 @@ export { mergeIntoQueue };
 export { makeStrings };
 export { normalizeRemoteUri };
 export { ObjectError };
+export { chunkArray };
+export { parseJSONValue };
+export { stableStringify };
 export { parseJSON5 };
 export { relativeDate };
 export { streamPacket };
@@ -482,6 +470,9 @@ export default {
   makeStrings,
   normalizeRemoteUri,
   ObjectError,
+  chunkArray,
+  parseJSONValue,
+  stableStringify,
   parseJSON5,
   relativeDate,
   streamPacket,
