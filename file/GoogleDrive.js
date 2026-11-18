@@ -2,11 +2,11 @@ import { google } from 'googleapis';
 import fs from 'node:fs';
 import nodestream from 'node:stream';
 import debug$0 from 'debug';
-import withDb from 'mime-type/with-db';
+import mimeLookup from './mimeLookup.js';
 import { getTempFilename, getFilePostfix, normalizeListDepth, relativeDate } from './tools.js';
 
 const debug = debug$0('@engine9/input/GoogleDrive');
-const { mimeType: mime } = withDb;
+const mime = { lookup: mimeLookup };
 const { Readable } = nodestream;
 const fsp = fs.promises;
 

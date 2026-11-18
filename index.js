@@ -4,7 +4,7 @@ import dayjs from 'dayjs';
 import debug$0 from 'debug';
 import unzipper from 'unzipper';
 import { v4 as uuidv4, v5 as uuidv5, v7 as uuidv7, validate as uuidIsValid } from 'uuid';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import handlebars from 'handlebars';
 import FileUtilities from './file/FileUtilities.js';
 import { inferCredentialsScheme } from './file/credentials.js';
@@ -258,7 +258,7 @@ async function create(options) {
   };
   // create a file to stream archive data to.
   const output = fs.createWriteStream(zipFilename);
-  const archive = archiver('zip', {
+  const archive = new ZipArchive({
     zlib: { level: 9 } // Sets the compression level.
   });
   return new Promise((resolve, reject) => {

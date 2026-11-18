@@ -1,11 +1,11 @@
 import debug$0 from 'debug';
 import fs from 'node:fs';
-import withDb from 'mime-type/with-db';
+import mimeLookup from './mimeLookup.js';
 import clientS3 from '@aws-sdk/client-s3';
 import { getTempFilename, getFilePostfix, normalizeListDepth, relativeDate } from './tools.js';
 import { s3ClientConfig } from './credentials.js';
 const debug = debug$0('@engine9/input/S3');
-const { mimeType: mime } = withDb;
+const mime = { lookup: mimeLookup };
 const {
   S3Client,
   CopyObjectCommand,

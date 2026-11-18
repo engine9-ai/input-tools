@@ -1,12 +1,12 @@
 import debug$0 from 'debug';
 import fs from 'node:fs';
-import withDb from 'mime-type/with-db';
+import mimeLookup from './mimeLookup.js';
 import { Storage } from '@google-cloud/storage';
 import { getTempFilename, getFilePostfix, normalizeListDepth, relativeDate } from './tools.js';
 import { gcsClientConfig } from './credentials.js';
 
 const debug = debug$0('@engine9/input/GCS');
-const { mimeType: mime } = withDb;
+const mime = { lookup: mimeLookup };
 
 function Worker() {
   this.prefix = 'gs';
