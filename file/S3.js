@@ -27,6 +27,8 @@ function Worker() {
 export const s3UploadClientDefaults = {
   requestStreamBufferSize: 64 * 1024
 };
+const PUT_BUFFER_MAX_BYTES = 16 * 1024 * 1024;
+const PUT_STREAM_MAX_ATTEMPTS = 4;
 function getParts(filename) {
   if (!filename) throw new Error(`Invalid filename: ${filename}`);
   if (!filename.startsWith('r2://') && !filename.startsWith('s3://')) {
@@ -169,22 +171,29 @@ Worker.prototype.put = async function (options) {
   const Bucket = parts[2];
   const Key = parts.slice(3).filter(Boolean).concat(file).join('/');
   const { size } = await fs.promises.stat(filename);
-  const Body = fs.createReadStream(filename);
   const ContentType = mime.lookup(file);
   debug(`Putting ${filename} to ${JSON.stringify({ Bucket, Key, ContentType, ContentLength: size })}`);
   const s3Client = this.getClient();
-  const command = new PutObjectCommand({
-    Bucket,
-    Key,
-    Body,
-    ContentType,
-    ContentLength: size
-  });
-  try {
-    return await s3Client.send(command);
-  } catch (e) {
-    Body.destroy();
-    throw e;
+
+  // The SDK cannot retry a stream body, so a transient S3 500 (InternalError)
+  // fails the put outright. Buffered bodies get the SDK's own retries; larger
+  // files are retried here with a fresh stream.
+  if (size <= PUT_BUFFER_MAX_BYTES) {
+    const Body = await fs.promises.readFile(filename);
+    return s3Client.send(new PutObjectCommand({ Bucket, Key, Body, ContentType, ContentLength: size }));
+  }
+  for (let attempt = 1; ; attempt++) {
+    const Body = fs.createReadStream(filename);
+    try {
+      return await s3Client.send(new PutObjectCommand({ Bucket, Key, Body, ContentType, ContentLength: size }));
+    } catch (e) {
+      Body.destroy();
+      const status = e.$metadata?.httpStatusCode;
+      const retryable = e.$retryable || status >= 500 || e.name === 'TimeoutError' || e.code === 'ECONNRESET';
+      if (!retryable || attempt >= PUT_STREAM_MAX_ATTEMPTS) throw e;
+      debug(`Put of ${filename} failed (${e.name}), attempt ${attempt}/${PUT_STREAM_MAX_ATTEMPTS}, retrying`);
+      await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+    }
   }
 };
 Worker.prototype.put.metadata = {

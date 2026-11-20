@@ -4,7 +4,7 @@ import dayjs from 'dayjs';
 import debug$0 from 'debug';
 import unzipper from 'unzipper';
 import { v4 as uuidv4, v5 as uuidv5, v7 as uuidv7, validate as uuidIsValid } from 'uuid';
-import { ZipArchive } from 'archiver';
+import yazl from 'yazl';
 import handlebars from 'handlebars';
 import FileUtilities from './file/FileUtilities.js';
 import { inferCredentialsScheme } from './file/credentials.js';
@@ -256,45 +256,29 @@ async function create(options) {
     dateCreated,
     files
   };
-  // create a file to stream archive data to.
   const output = fs.createWriteStream(zipFilename);
-  const archive = new ZipArchive({
-    zlib: { level: 9 } // Sets the compression level.
-  });
+  const archive = new yazl.ZipFile();
   return new Promise((resolve, reject) => {
     debug(`Setting up write stream to ${zipFilename}`);
-    // listen for all archive data to be written
-    // 'close' event is fired only when a file descriptor is involved
-    output.on('close', () => {
-      debug('archiver has been finalized and the output file descriptor has closed, calling success');
-      debug(zipFilename);
-      return resolve({
-        filename: zipFilename,
-        bytes: archive.pointer()
-      });
+    output.on('close', async () => {
+      try {
+        const { size } = await fs.promises.stat(zipFilename);
+        debug(`Finished writing ${zipFilename}`);
+        resolve({ filename: zipFilename, bytes: size });
+      } catch (err) {
+        reject(err);
+      }
     });
-    // This event is fired when the data source is drained no matter what was the data source.
-    // It is not part of this library but rather from the NodeJS Stream API.
-    // @see: https://nodejs.org/api/stream.html#stream_event_end
-    output.on('end', () => {
-      // debug('end event -- Data has been drained');
-    });
-    // warnings could be file not founds, etc, but we error even on those
-    archive.on('warning', (err) => {
-      reject(err);
-    });
-    // good practice to catch this error explicitly
-    archive.on('error', (err) => {
-      reject(err);
-    });
-    archive.pipe(output);
-    files.forEach(({ path: name, originalFilename }) => archive.file(originalFilename, { name }));
+    output.on('error', reject);
+    archive.on('error', reject);
+    archive.outputStream.pipe(output);
+    files.forEach(({ path: name, originalFilename }) => archive.addFile(originalFilename, name, { compressionLevel: 9 }));
     files.forEach((f) => {
       delete f.originalFilename;
       delete f.isNew;
     });
-    archive.append(Buffer.from(JSON.stringify(manifest, null, 4), 'utf8'), { name: 'manifest.json' });
-    archive.finalize();
+    archive.addBuffer(Buffer.from(JSON.stringify(manifest, null, 4), 'utf8'), 'manifest.json', { compressionLevel: 9 });
+    archive.end();
   });
 }
 function getDateRangeArray(startDate, endDate) {

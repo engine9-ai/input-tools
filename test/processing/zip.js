@@ -12,7 +12,16 @@ describe('Test Person Packet Creator', async () => {
       messageFiles: 'test/sample/message/message.json5'
     });
     debug('Successfully created:', out);
+    assert.ok(out.bytes > 0, 'Packet is empty');
+    const manifest = await getManifest({ packet: out.filename });
+    assert.deepEqual(
+      manifest.files.map((f) => f.path).sort(),
+      ['message/message.json5', 'person/5_fake_people.csv']
+    );
     return out;
+  });
+  it('should reject a missing file', async () => {
+    await assert.rejects(create({ personFiles: ['./test/sample/does-not-exist.csv'] }));
   });
   it('should retrieve a manifest', async () => {
     const manifest = await getManifest({ packet: './test/sample/5_message.packet.zip' });

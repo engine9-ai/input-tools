@@ -1,6 +1,6 @@
 {
   "name": "@engine9/input-tools",
-  "version": "2.7.2",
+  "version": "2.7.3",
   "type": "module",
   "description": "Cross-environment utilities for Engine9-style inputs (no server-only or optional-engine coupling; e.g. DuckDB paths belong in the server app)",
   "main": "index.js",
@@ -19,7 +19,6 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",
     "@google-cloud/storage": "^8.2.0",
-    "archiver": "^8.0.0",
     "async-mutex": "^0.5.0",
     "csv": "^6.3.11",
     "dayjs": "^1.11.13",
@@ -38,7 +37,8 @@
     "unzipper": "^0.12.1",
     "uuid": "^14.0.1",
     "xlstream": "^2.5.5",
-    "yargs": "^17.7.2"
+    "yargs": "^17.7.2",
+    "yazl": "^3.3.1"
   },
   "directories": {
     "test": "test"
